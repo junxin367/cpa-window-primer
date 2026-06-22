@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -112,7 +114,7 @@ func (a *app) worker(stop <-chan struct{}, interval time.Duration, runID uint64)
 }
 
 func (a *app) runDue(now time.Time, stop <-chan struct{}, runID uint64) {
-	cfg, _, _ := a.snapshot()
+	cfg, state, _ := a.snapshot()
 	if !cfg.Enabled || len(cfg.AuthIDs) == 0 || len(cfg.Clocks) == 0 {
 		return
 	}
@@ -123,6 +125,9 @@ func (a *app) runDue(now time.Time, stop <-chan struct{}, runID uint64) {
 	}
 	for _, authID := range cfg.AuthIDs {
 		if _, ok := allowed[authID]; !ok {
+			continue
+		}
+		if _, _, blocked := state.quotaBlockInfo(authID, now); blocked {
 			continue
 		}
 		for _, clock := range cfg.Clocks {
@@ -212,6 +217,19 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 	now := time.Now()
 	if !force {
 		a.mu.Lock()
+		if until, reason, blocked := a.state.quotaBlockInfo(authID, now); blocked {
+			record := attemptRecord{
+				At:        now,
+				WindowKey: windowKey,
+				Model:     cfg.Model,
+				Success:   false,
+				Error:     quotaBlockedError(reason, until),
+			}
+			a.state.recordAttempt(authID, record)
+			_ = saveState(cfg.StatePath, a.state)
+			a.mu.Unlock()
+			return record
+		}
 		last := a.state.lastSuccess(authID)
 		if !last.IsZero() && now.Before(last.Add(cfg.MinDuration)) {
 			record := attemptRecord{
@@ -229,6 +247,19 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 		a.mu.Unlock()
 	}
 
+	if !a.claimActiveWarmup(authID) {
+		record := attemptRecord{
+			At:        now,
+			WindowKey: windowKey,
+			Model:     cfg.Model,
+			Success:   false,
+			Error:     "warmup_already_running",
+		}
+		a.recordAttemptWithoutWindow(authID, record, cfg.StatePath)
+		return record
+	}
+	defer a.clearActiveWarmup(authID)
+
 	resp, err := executeHostWarmup(authID, cfg.Model, cfg.Prompt, hostCallbackID)
 	record := attemptRecord{
 		At:        now,
@@ -245,14 +276,97 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 			record.Error = fmt.Sprintf("status %d", resp.StatusCode)
 		}
 	}
+	quotaBlocked := !record.Success && isWarmupQuotaBlocked(record.StatusCode, resp.Headers, resp.Body, err)
+	quotaUntil := time.Time{}
+	if quotaBlocked {
+		quotaUntil = warmupQuotaBlockUntil(resp.Headers, cfg.MinDuration, now)
+	}
 
 	a.mu.Lock()
 	a.state.recordAttempt(authID, record)
+	if quotaBlocked {
+		a.state.recordQuotaBlocked(authID, now, quotaUntil, warmupQuotaReason(record))
+	}
 	if err := saveState(cfg.StatePath, a.state); err != nil {
 		a.lastError = err.Error()
 	}
 	a.mu.Unlock()
 	return record
+}
+
+func (a *app) claimActiveWarmup(authID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	key := windowPendingKey(authID, "__active__")
+	if _, ok := a.pending[key]; ok {
+		return false
+	}
+	a.pending[key] = 0
+	return true
+}
+
+func (a *app) clearActiveWarmup(authID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.pending, windowPendingKey(authID, "__active__"))
+}
+
+func (a *app) recordAttemptWithoutWindow(authID string, record attemptRecord, statePath string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	stateRecord := record
+	stateRecord.WindowKey = ""
+	a.state.recordAttempt(authID, stateRecord)
+	if err := saveState(statePath, a.state); err != nil {
+		a.lastError = err.Error()
+	}
+}
+
+func warmupQuotaBlockUntil(headers http.Header, fallback time.Duration, now time.Time) time.Time {
+	if headers != nil {
+		retryAfter := strings.TrimSpace(headers.Get("Retry-After"))
+		if retryAfter != "" {
+			if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
+				return now.Add(time.Duration(seconds) * time.Second)
+			}
+			if at, err := http.ParseTime(retryAfter); err == nil && at.After(now) {
+				return at
+			}
+		}
+	}
+	if fallback <= 0 {
+		fallback = 5 * time.Hour
+	}
+	return now.Add(fallback)
+}
+
+func warmupQuotaReason(record attemptRecord) string {
+	reason := strings.TrimSpace(record.Error)
+	summary := strings.TrimSpace(record.ResponseSummary)
+	if summary != "" {
+		if reason != "" {
+			reason += ": "
+		}
+		reason += summary
+	}
+	if reason == "" {
+		return "quota_or_rate_limit"
+	}
+	if len(reason) > 512 {
+		return reason[:512]
+	}
+	return reason
+}
+
+func quotaBlockedError(reason string, until time.Time) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "quota_or_rate_limit"
+	}
+	if until.IsZero() {
+		return "quota_blocked: " + reason
+	}
+	return fmt.Sprintf("quota_blocked_until %s: %s", until.Format(time.RFC3339), reason)
 }
 
 func (a *app) setLastError(message string) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
@@ -33,8 +34,28 @@ func TestIsSupportedOAuthAuth(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "claude excluded",
+			name: "claude provider",
 			auth: pluginapi.HostAuthFileEntry{Provider: "claude", Name: "claude.json"},
+			want: true,
+		},
+		{
+			name: "anthropic provider",
+			auth: pluginapi.HostAuthFileEntry{Provider: "anthropic", Name: "anthropic.json"},
+			want: true,
+		},
+		{
+			name: "unavailable quota",
+			auth: pluginapi.HostAuthFileEntry{Provider: "claude", Name: "claude.json", Unavailable: true, StatusMessage: "quota exhausted"},
+			want: false,
+		},
+		{
+			name: "next retry in future",
+			auth: pluginapi.HostAuthFileEntry{Provider: "codex", Name: "codex.json", NextRetryAfter: time.Now().Add(time.Hour)},
+			want: false,
+		},
+		{
+			name: "rate limit status message",
+			auth: pluginapi.HostAuthFileEntry{Provider: "codex", Name: "codex.json", StatusMessage: "rate limit exceeded"},
 			want: false,
 		},
 	}

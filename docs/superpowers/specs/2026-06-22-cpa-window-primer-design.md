@@ -2,11 +2,11 @@
 
 ## 目标
 
-为 CLIProxyAPI 开发一个独立插件，用于对选中的 OAuth 认证文件在指定时间窗口前发送一次轻量 `hi` 请求，提前触发约 5 小时可用窗口。当前目标范围是 Codex/OpenAI OAuth auth。
+为 CLIProxyAPI 开发一个独立插件，用于对选中的 OAuth 认证文件在指定时间窗口前发送一次轻量 `hi` 请求，提前触发约 5 小时可用窗口。当前目标范围是 Codex/OpenAI/Claude/Anthropic auth。
 
 默认行为：
 
-- 认证范围：仅 Codex/OpenAI OAuth auth。
+- 认证范围：Codex/OpenAI/Claude/Anthropic auth。
 - 默认模型：`gpt-5.4`。
 - 默认提示词：`hi`。
 - 默认时间：`07:00`、`12:00`、`17:00`。
@@ -18,7 +18,7 @@
 插件使用三类 CPA 插件能力：
 
 - `Management API`：展示 auth 列表、保存多选 auth 与多选时间、展示最近执行结果、提供手动触发入口。
-- `host.auth.*` 回调：读取宿主 auth 文件列表与运行态信息，只筛选 Codex/OpenAI OAuth auth。
+- `host.auth.*` 回调：读取宿主 auth 文件列表与运行态信息，只筛选 Codex/OpenAI/Claude/Anthropic auth。
 - `host.model.execute` + `scheduler.pick`：通过宿主模型执行路径发送 warmup 请求，并在调度阶段强制选中目标 auth。
 
 `host.model.execute` 当前没有直接暴露 `pinned_auth_id` metadata，因此插件通过内部 header 传递目标 auth：
@@ -104,7 +104,7 @@
 
 资源页展示：
 
-- 可选 Codex/OpenAI OAuth auth。
+- 可选 Codex/OpenAI/Claude/Anthropic auth。
 - 当前选中 auth。
 - 当前选中时间。
 - 最近执行结果。
@@ -138,7 +138,7 @@ POST /v0/management/cpa-window-primer/run
 - 5 小时间隔校验，覆盖秒级延迟场景。
 - 自定义窗口间隔不足 5 小时时跳过。
 - scheduler header 选择指定 auth。
-- auth 过滤仅保留 Codex/OpenAI OAuth。
+- auth 过滤仅保留 Codex/OpenAI/Claude/Anthropic。
 
 不为单次排查创建临时测试文件；如果临时测试用于验证，任务结束前删除。
 

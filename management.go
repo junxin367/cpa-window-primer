@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
 type managementRegistrationResponse struct {
@@ -51,13 +53,20 @@ type managementSnapshot struct {
 }
 
 type managementAuthView struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Provider string `json:"provider,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Email    string `json:"email,omitempty"`
-	Label    string `json:"label,omitempty"`
-	Source   string `json:"source,omitempty"`
+	ID                string     `json:"id"`
+	Name              string     `json:"name"`
+	Provider          string     `json:"provider,omitempty"`
+	Status            string     `json:"status,omitempty"`
+	StatusMessage     string     `json:"status_message,omitempty"`
+	Email             string     `json:"email,omitempty"`
+	Label             string     `json:"label,omitempty"`
+	Source            string     `json:"source,omitempty"`
+	Selectable        bool       `json:"selectable"`
+	Unavailable       bool       `json:"unavailable,omitempty"`
+	Disabled          bool       `json:"disabled,omitempty"`
+	NextRetryAfter    *time.Time `json:"next_retry_after,omitempty"`
+	QuotaBlockedUntil *time.Time `json:"quota_blocked_until,omitempty"`
+	BlockedReason     string     `json:"blocked_reason,omitempty"`
 }
 
 func managementRegistration() managementRegistrationResponse {
@@ -132,6 +141,15 @@ func (a *app) handleManualRun(req managementRequest) ([]byte, error) {
 		return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{"error": "auth_id is required"}))
 	}
 	cfg, _, _ := a.snapshot()
+	if !body.Force {
+		allowed, err := allowedAuthIDs()
+		if err != nil {
+			return okEnvelope(jsonResponse(http.StatusBadGateway, map[string]string{"error": err.Error()}))
+		}
+		if _, ok := allowed[body.AuthID]; !ok {
+			return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{"error": "auth_id is not available for warmup"}))
+		}
+	}
 	record := a.executeWarmup(body.AuthID, "manual-"+time.Now().Format("20060102T150405"), cfg, req.HostCallbackID, body.Force)
 	status := http.StatusOK
 	if !record.Success {
@@ -167,23 +185,44 @@ func (a *app) managementSnapshot() managementSnapshot {
 	if err != nil {
 		lastErr = err.Error()
 	}
+	now := time.Now()
 	rows := make([]managementAuthView, 0, len(auths))
 	for _, auth := range auths {
-		if !isSupportedOAuthAuth(auth) {
+		if !isManagedOAuthAuth(auth) {
 			continue
 		}
 		id := authIDForEntry(auth)
 		if id == "" {
 			continue
 		}
+		hostBlocked := isHostAuthQuotaBlocked(auth, now)
+		quotaUntil, quotaReason, quotaBlocked := state.quotaBlockInfo(id, now)
+		blockedReason := authBlockedReason(auth, hostBlocked, quotaBlocked, quotaReason)
+		var nextRetryAfter *time.Time
+		if !auth.NextRetryAfter.IsZero() {
+			next := auth.NextRetryAfter
+			nextRetryAfter = &next
+		}
+		var quotaBlockedUntil *time.Time
+		if quotaBlocked && !quotaUntil.IsZero() {
+			until := quotaUntil
+			quotaBlockedUntil = &until
+		}
 		rows = append(rows, managementAuthView{
-			ID:       id,
-			Name:     auth.Name,
-			Provider: auth.Provider,
-			Status:   auth.Status,
-			Email:    auth.Email,
-			Label:    auth.Label,
-			Source:   auth.Source,
+			ID:                id,
+			Name:              auth.Name,
+			Provider:          auth.Provider,
+			Status:            auth.Status,
+			StatusMessage:     auth.StatusMessage,
+			Email:             auth.Email,
+			Label:             auth.Label,
+			Source:            auth.Source,
+			Selectable:        !auth.Disabled && !hostBlocked && !quotaBlocked,
+			Unavailable:       auth.Unavailable,
+			Disabled:          auth.Disabled,
+			NextRetryAfter:    nextRetryAfter,
+			QuotaBlockedUntil: quotaBlockedUntil,
+			BlockedReason:     blockedReason,
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -197,6 +236,34 @@ func (a *app) managementSnapshot() managementSnapshot {
 		State:     state,
 		LastError: lastErr,
 	}
+}
+
+func authBlockedReason(auth pluginapi.HostAuthFileEntry, hostBlocked, quotaBlocked bool, quotaReason string) string {
+	if auth.Disabled {
+		return "认证文件已禁用"
+	}
+	if quotaBlocked {
+		if strings.TrimSpace(quotaReason) != "" {
+			return strings.TrimSpace(quotaReason)
+		}
+		return "无额度或限流中"
+	}
+	if !auth.NextRetryAfter.IsZero() {
+		return "认证文件冷却中"
+	}
+	if auth.Unavailable {
+		if strings.TrimSpace(auth.StatusMessage) != "" {
+			return strings.TrimSpace(auth.StatusMessage)
+		}
+		return "认证文件当前不可用"
+	}
+	if hostBlocked {
+		if strings.TrimSpace(auth.StatusMessage) != "" {
+			return strings.TrimSpace(auth.StatusMessage)
+		}
+		return "疑似无额度或限流中"
+	}
+	return ""
 }
 
 func (a *app) renderStatusPage() []byte {
@@ -263,7 +330,7 @@ func (a *app) renderStatusPage() []byte {
       background: color-mix(in srgb, #2563eb 12%, Canvas 88%);
       color: color-mix(in srgb, #2563eb 72%, CanvasText 28%);
     }
-    .layout { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 16px; align-items: start; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; align-items: start; }
     .stack { display: grid; gap: 16px; }
     .panel {
       border: 1px solid color-mix(in srgb, CanvasText 14%, Canvas 86%);
@@ -273,6 +340,8 @@ func (a *app) renderStatusPage() []byte {
     }
     .fields { display: grid; gap: 13px; }
     .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+    .settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; align-items: start; }
+    .wide-field { grid-column: 1 / -1; }
     .actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
     .actions button { width: auto; }
     .inline { display: flex; gap: 8px; align-items: center; }
@@ -316,26 +385,28 @@ func (a *app) renderStatusPage() []byte {
     }
     .badge.ok { background: color-mix(in srgb, #16a34a 14%, Canvas 86%); color: color-mix(in srgb, #15803d 78%, CanvasText 22%); }
     .badge.warn { background: color-mix(in srgb, #d97706 14%, Canvas 86%); color: color-mix(in srgb, #b45309 78%, CanvasText 22%); }
-    .status {
-      margin-top: 16px;
+    .inline-status {
       white-space: pre-wrap;
       word-break: break-word;
-      border-radius: 8px;
-      padding: 13px;
+      border-radius: 6px;
+      padding: 9px 10px;
       background: color-mix(in srgb, #2563eb 10%, Canvas 90%);
       border: 1px solid color-mix(in srgb, #2563eb 18%, Canvas 82%);
-      font-size: 13px;
-      line-height: 1.45;
+      font-size: 12px;
+      font-weight: 650;
+      line-height: 1.4;
     }
-    .status.error {
-      background: color-mix(in srgb, #dc2626 12%, Canvas 88%);
-      border-color: color-mix(in srgb, #dc2626 24%, Canvas 76%);
+    .inline-status.error {
+      background: color-mix(in srgb, #dc2626 10%, Canvas 90%);
+      border-color: color-mix(in srgb, #dc2626 22%, Canvas 78%);
+      color: color-mix(in srgb, #b91c1c 82%, CanvasText 18%);
     }
     @media (max-width: 920px) {
       main { padding: 16px; }
       header { display: grid; align-items: start; }
       .header-actions { justify-content: start; }
-      .layout, .grid { grid-template-columns: 1fr; }
+      .layout, .grid, .settings-grid { grid-template-columns: 1fr; }
+      .wide-field { grid-column: auto; }
       .actions { display: grid; }
       .actions button { width: 100%; }
     }
@@ -353,25 +424,6 @@ func (a *app) renderStatusPage() []byte {
     <div class="layout">
       <div class="stack">
         <section class="panel">
-          <h2>连接</h2>
-          <div class="fields">
-            <label><span>CPA 管理密钥</span>
-              <input id="managementKey" type="password" autocomplete="off" spellcheck="false">
-            </label>
-            <p class="muted">保存配置、刷新状态和手动预热需要 CPA 管理密钥。密钥只用于本次页面请求，不会保存。</p>
-            <div class="actions">
-              <button id="saveConfig" type="button">保存配置</button>
-              <button id="refreshSnapshot" type="button" class="secondary">刷新状态</button>
-            </div>
-          </div>
-        </section>
-        <section class="panel">
-          <h2>运行概览</h2>
-          <div class="summary" id="overview"></div>
-        </section>
-      </div>
-      <div class="stack">
-        <section class="panel">
           <h2>预热设置</h2>
           <div class="fields">
             <label class="inline">
@@ -387,25 +439,23 @@ func (a *app) renderStatusPage() []byte {
               </div>
               <p class="muted">插件会在每个目标时间前 1 分钟内发送。如果同一认证文件距离上次成功不足 5 小时，会在该 1 分钟窗口内等待；等不到就跳过，避免提前刷新失败。</p>
             </div>
-            <div class="grid">
+            <div class="settings-grid">
               <label><span>模型</span>
                 <input id="model" spellcheck="false" placeholder="gpt-5.4">
               </label>
               <label><span>最小间隔</span>
                 <input id="minInterval" spellcheck="false" placeholder="5h">
               </label>
-            </div>
-            <div class="grid">
               <label><span>提前触发窗口</span>
                 <input id="leadTime" spellcheck="false" placeholder="1m">
               </label>
               <label><span>后台检查间隔</span>
                 <input id="tickInterval" spellcheck="false" placeholder="5s">
               </label>
+              <label class="wide-field"><span>预热内容</span>
+                <textarea id="prompt" spellcheck="false" placeholder="hi"></textarea>
+              </label>
             </div>
-            <label><span>预热内容</span>
-              <textarea id="prompt" spellcheck="false" placeholder="hi"></textarea>
-            </label>
           </div>
         </section>
         <section class="panel">
@@ -432,8 +482,27 @@ func (a *app) renderStatusPage() []byte {
           </div>
         </section>
       </div>
+      <div class="stack">
+        <section class="panel">
+          <h2>连接</h2>
+          <div class="fields">
+            <label><span>CPA 管理密钥</span>
+              <input id="managementKey" type="password" autocomplete="off" spellcheck="false">
+            </label>
+            <p class="muted">刷新状态、保存配置和手动预热需要 CPA 管理密钥。已保存的后台预热不依赖本页面持续填写；密钥只用于本次页面请求，不会保存。</p>
+            <div class="actions">
+              <button id="saveConfig" type="button">保存配置</button>
+              <button id="refreshSnapshot" type="button" class="secondary">刷新状态</button>
+            </div>
+            <div id="connectionStatus" class="inline-status" hidden></div>
+          </div>
+        </section>
+        <section class="panel">
+          <h2>运行概览</h2>
+          <div class="summary" id="overview"></div>
+        </section>
+      </div>
     </div>
-    <section id="statusBox" class="status" hidden></section>
   </main>
   <script>
     const INITIAL_DATA = `)
@@ -476,23 +545,37 @@ func (a *app) renderStatusPage() []byte {
     }
 
     function setStatus(message, error) {
-      const box = field('statusBox');
+      const box = field('connectionStatus');
       box.hidden = false;
       box.textContent = message;
-      box.className = 'status' + (error ? ' error' : '');
+      box.className = 'inline-status' + (error ? ' error' : '');
     }
 
     function clearStatus() {
-      const box = field('statusBox');
+      const box = field('connectionStatus');
       box.hidden = true;
       box.textContent = '';
-      box.className = 'status';
+      box.className = 'inline-status';
+    }
+
+    function setConnectionStatus(message) {
+      setStatus(message, true);
+    }
+
+    function clearConnectionStatus() {
+      clearStatus();
     }
 
     function authHeaders() {
       const key = field('managementKey').value.trim();
-      if (!key) throw new Error('需要填写 CPA 管理密钥');
-      return { Authorization: key.toLowerCase().startsWith('bearer ') ? key : 'Bearer ' + key };
+      if (!key) {
+        setConnectionStatus('需要填写 CPA 管理密钥');
+        const error = new Error('需要填写 CPA 管理密钥');
+        error.connectionStatus = true;
+        throw error;
+      }
+      clearConnectionStatus();
+      return { Authorization: /^bearer\s+/i.test(key) ? key : 'Bearer ' + key };
     }
 
     async function readJSON(response) {
@@ -535,6 +618,12 @@ func (a *app) renderStatusPage() []byte {
     }
 
     function nextAllowedText(authState) {
+      if (authState && authState.quota_blocked_until) {
+        const until = new Date(authState.quota_blocked_until);
+        if (!Number.isNaN(until.getTime()) && Date.now() < until.getTime()) {
+          return '无额度/限流忽略至 ' + until.toLocaleString('zh-CN', { hour12: false });
+        }
+      }
       if (!authState || !authState.last_success_at) return '现在可发送';
       const duration = parseDuration(state.snapshot.config.min_interval);
       if (!duration) return '按最小间隔判断';
@@ -556,11 +645,12 @@ func (a *app) renderStatusPage() []byte {
 
     function renderOverview() {
       const config = state.snapshot.config;
-      const selectedCount = (config.auth_ids || []).length;
+      const selectableIDs = new Set((state.snapshot.auths || []).filter((auth) => auth.selectable !== false).map((auth) => auth.id));
+      const selectedCount = (config.auth_ids || []).filter((id) => selectableIDs.has(id)).length;
       field('enabledMetric').textContent = config.enabled ? '后台已启用' : '后台已停用';
       field('selectedMetric').textContent = selectedCount + ' 个认证文件';
       const rows = [
-        ['可用认证文件', state.snapshot.auths.length + ' 个'],
+        ['可管理认证文件', state.snapshot.auths.length + ' 个'],
         ['已选择认证文件', selectedCount + ' 个'],
         ['发送窗口', (config.times || []).join(' / ') || '未配置'],
         ['模型', config.model || 'gpt-5.4'],
@@ -629,7 +719,7 @@ func (a *app) renderStatusPage() []byte {
     }
 
     function collectAuthIDs() {
-      return Array.from(document.querySelectorAll('.auth-check:checked')).map((item) => item.dataset.authId);
+      return Array.from(document.querySelectorAll('.auth-check:checked:not(:disabled)')).map((item) => item.dataset.authId);
     }
 
     function collectConfig() {
@@ -652,7 +742,7 @@ func (a *app) renderStatusPage() []byte {
       const authState = (state.snapshot.state && state.snapshot.state.auths) || {};
       if (!state.snapshot.auths.length) {
         const tr = document.createElement('tr');
-        const td = createCell('没有找到可用的 OpenAI OAuth 认证文件。');
+        const td = createCell('没有找到可管理的 Codex / OpenAI / Claude / Anthropic 认证文件。');
         td.colSpan = 7;
         tr.appendChild(td);
         body.appendChild(tr);
@@ -660,13 +750,15 @@ func (a *app) renderStatusPage() []byte {
       }
       for (const auth of state.snapshot.auths) {
         const itemState = authState[auth.id] || {};
+        const selectable = auth.selectable !== false;
         const tr = document.createElement('tr');
         const selectTd = document.createElement('td');
         const check = document.createElement('input');
         check.type = 'checkbox';
         check.className = 'auth-check';
         check.dataset.authId = auth.id;
-        check.checked = selected.has(auth.id);
+        check.disabled = !selectable;
+        check.checked = selectable && selected.has(auth.id);
         check.addEventListener('change', () => {
           state.snapshot.config.auth_ids = collectAuthIDs();
           renderOverview();
@@ -682,14 +774,30 @@ func (a *app) renderStatusPage() []byte {
         idLine.className = 'muted';
         idLine.textContent = auth.id;
         nameTd.appendChild(idLine);
+        if (auth.provider) {
+          const providerLine = document.createElement('div');
+          providerLine.className = 'muted';
+          providerLine.textContent = auth.provider;
+          nameTd.appendChild(providerLine);
+        }
         tr.appendChild(nameTd);
 
         tr.appendChild(createCell(auth.email || auth.label || '无'));
         const statusTd = document.createElement('td');
         const badge = document.createElement('span');
-        badge.className = 'badge ' + (String(auth.status).toLowerCase() === 'active' ? 'ok' : 'warn');
+        badge.className = 'badge ' + (selectable && String(auth.status).toLowerCase() === 'active' ? 'ok' : 'warn');
         badge.textContent = auth.status || '未知';
         statusTd.appendChild(badge);
+        const details = [];
+        if (auth.blocked_reason) details.push('不可选：' + auth.blocked_reason);
+        if (auth.next_retry_after) details.push('重试时间：' + formatTime(auth.next_retry_after));
+        if (auth.status_message && auth.status_message !== auth.blocked_reason) details.push(auth.status_message);
+        if (details.length) {
+          const detail = document.createElement('div');
+          detail.className = 'muted';
+          detail.textContent = details.join('；');
+          statusTd.appendChild(detail);
+        }
         tr.appendChild(statusTd);
         tr.appendChild(createCell(formatTime(itemState.last_success_at)));
         tr.appendChild(createCell(attemptText(itemState.last_attempt) + '\n' + nextAllowedText(itemState)));
@@ -699,6 +807,7 @@ func (a *app) renderStatusPage() []byte {
         run.type = 'button';
         run.className = 'secondary';
         run.textContent = '立即预热';
+        run.disabled = !selectable;
         run.addEventListener('click', () => runWarmup(auth.id, false));
         actionTd.appendChild(run);
         tr.appendChild(actionTd);
@@ -722,6 +831,7 @@ func (a *app) renderStatusPage() []byte {
         renderAll();
         if (showMessage) setStatus('状态已刷新。');
       } catch (error) {
+        if (error.connectionStatus) return;
         setStatus(error.message || String(error), true);
       }
     }
@@ -741,6 +851,7 @@ func (a *app) renderStatusPage() []byte {
         renderAll();
         setStatus('配置已保存，后台调度已按新配置重新加载。');
       } catch (error) {
+        if (error.connectionStatus) return;
         setStatus(error.message || String(error), true);
       }
     }
@@ -758,6 +869,7 @@ func (a *app) renderStatusPage() []byte {
         await refreshSnapshot(false);
         setStatus('手动预热完成：\n' + JSON.stringify(data, null, 2));
       } catch (error) {
+        if (error.connectionStatus) return;
         setStatus(error.message || String(error), true);
       }
     }
@@ -767,7 +879,7 @@ func (a *app) renderStatusPage() []byte {
     field('addTime').addEventListener('click', () => addTimeRow('07:00'));
     field('resetTimes').addEventListener('click', () => renderTimes(DEFAULT_TIMES));
     field('selectAllAuths').addEventListener('click', () => {
-      for (const item of document.querySelectorAll('.auth-check')) item.checked = true;
+      for (const item of document.querySelectorAll('.auth-check:not(:disabled)')) item.checked = true;
       state.snapshot.config.auth_ids = collectAuthIDs();
       renderOverview();
     });

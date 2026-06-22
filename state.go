@@ -14,9 +14,12 @@ type pluginState struct {
 }
 
 type authState struct {
-	LastSuccessAt *time.Time              `json:"last_success_at,omitempty"`
-	LastAttempt   *attemptRecord          `json:"last_attempt,omitempty"`
-	Windows       map[string]windowRecord `json:"windows,omitempty"`
+	LastSuccessAt      *time.Time              `json:"last_success_at,omitempty"`
+	LastAttempt        *attemptRecord          `json:"last_attempt,omitempty"`
+	QuotaBlockedAt     *time.Time              `json:"quota_blocked_at,omitempty"`
+	QuotaBlockedUntil  *time.Time              `json:"quota_blocked_until,omitempty"`
+	QuotaBlockedReason string                  `json:"quota_blocked_reason,omitempty"`
+	Windows            map[string]windowRecord `json:"windows,omitempty"`
 }
 
 type attemptRecord struct {
@@ -60,6 +63,15 @@ func (s *pluginState) clone() *pluginState {
 			attempt := *item.LastAttempt
 			copyItem.LastAttempt = &attempt
 		}
+		if item.QuotaBlockedAt != nil {
+			at := *item.QuotaBlockedAt
+			copyItem.QuotaBlockedAt = &at
+		}
+		if item.QuotaBlockedUntil != nil {
+			until := *item.QuotaBlockedUntil
+			copyItem.QuotaBlockedUntil = &until
+		}
+		copyItem.QuotaBlockedReason = item.QuotaBlockedReason
 		if item.Windows != nil {
 			copyItem.Windows = make(map[string]windowRecord, len(item.Windows))
 			for key, record := range item.Windows {
@@ -131,6 +143,17 @@ func (s *pluginState) lastSuccess(authID string) time.Time {
 	return *s.Auths[authID].LastSuccessAt
 }
 
+func (s *pluginState) quotaBlockInfo(authID string, now time.Time) (time.Time, string, bool) {
+	if s == nil || s.Auths == nil || s.Auths[authID] == nil || s.Auths[authID].QuotaBlockedUntil == nil {
+		return time.Time{}, "", false
+	}
+	item := s.Auths[authID]
+	if item.QuotaBlockedUntil.After(now) {
+		return *item.QuotaBlockedUntil, item.QuotaBlockedReason, true
+	}
+	return *item.QuotaBlockedUntil, item.QuotaBlockedReason, false
+}
+
 func (s *pluginState) windowProcessed(authID, windowKey string) bool {
 	if s == nil || s.Auths == nil || s.Auths[authID] == nil {
 		return false
@@ -154,7 +177,17 @@ func (s *pluginState) recordAttempt(authID string, record attemptRecord) {
 	if record.Success {
 		at := record.At
 		item.LastSuccessAt = &at
+		item.QuotaBlockedAt = nil
+		item.QuotaBlockedUntil = nil
+		item.QuotaBlockedReason = ""
 	}
+}
+
+func (s *pluginState) recordQuotaBlocked(authID string, at, until time.Time, reason string) {
+	item := s.ensureAuth(authID)
+	item.QuotaBlockedAt = &at
+	item.QuotaBlockedUntil = &until
+	item.QuotaBlockedReason = strings.TrimSpace(reason)
 }
 
 func (s *pluginState) recordSkip(authID, windowKey, reason string, at time.Time) {

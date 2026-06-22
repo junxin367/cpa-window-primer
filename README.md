@@ -1,8 +1,8 @@
 # CPA Window Primer
 
-CLIProxyAPI 插件，用于在配置的每日时间窗口前，对选中的 OpenAI OAuth 认证文件发送一次轻量 `hi` 请求，提前触发约 5 小时可用窗口。
+CLIProxyAPI 插件，用于在配置的每日时间窗口前，对选中的 Codex、OpenAI、Claude 或 Anthropic 认证文件发送一次轻量 `hi` 请求，提前触发约 5 小时可用窗口。
 
-插件名称保持 provider-neutral，因为它处理的是认证文件窗口预热，不绑定某一个客户端品牌。当前筛选范围是 CPA 暴露的 Codex/OpenAI OAuth auth 记录。
+插件名称保持 provider-neutral，因为它处理的是认证文件窗口预热，不绑定某一个客户端品牌。当前筛选范围是 CPA 暴露的 Codex/OpenAI/Claude/Anthropic auth 记录。
 
 ## 行为
 
@@ -11,6 +11,7 @@ CLIProxyAPI 插件，用于在配置的每日时间窗口前，对选中的 Open
 - 默认目标窗口：`07:00`、`12:00`、`17:00`
 - 触发窗口：每个目标时间前 1 分钟，例如 `06:59:00-07:00:00`
 - 最小间隔：同一认证文件按最近一次成功预热时间计算，默认 `5h`
+- 无额度跳过：宿主标记为 unavailable、存在未来 `next_retry_after`，或 warmup 返回 quota/rate limit 时，插件会忽略该认证文件直到冷却时间结束
 - 调度固定：内部请求携带 `X-CPA-Window-Primer-Auth-ID`，插件 scheduler 会选择匹配的认证文件
 
 如果到达目标窗口时，同一认证文件尚未满足 `last_success_at + 5h`，插件会在这一分钟内等待到可发送时间；如果等不到，则跳过该窗口并记录 `min_interval_not_met`，避免还没满 5 小时就触发。
@@ -25,8 +26,8 @@ CLIProxyAPI 插件，用于在配置的每日时间窗口前，对选中的 Open
 
 管理页提供：
 
-- CPA 管理密钥输入，用于保存配置、刷新状态、手动预热。
-- OpenAI OAuth 认证文件多选。
+- CPA 管理密钥输入，用于保存配置、刷新状态、手动预热；已保存的后台预热不依赖本页面持续填写。
+- Codex、OpenAI、Claude 或 Anthropic 认证文件多选；无额度或冷却中的账号会显示为不可选。
 - 发送时间窗口多选，默认 `07:00`、`12:00`、`17:00`。
 - 模型、prompt、最小间隔、提前触发窗口、后台检查间隔配置。
 - 最近成功时间、最近尝试结果、下次可发送时间展示。

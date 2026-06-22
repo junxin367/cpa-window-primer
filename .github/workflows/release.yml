@@ -130,6 +130,5 @@ jobs:
             gh release create "${GITHUB_REF_NAME}" artifacts/*.zip artifacts/checksums.txt \
               --repo "${GITHUB_REPOSITORY}" \
               --verify-tag \
-              --title "${GITHUB_REF_NAME}" \
-              --notes "Automated release for ${GITHUB_REF_NAME}."
+              --generate-notes
           fi

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
@@ -81,13 +82,20 @@ func callHostAuthGetRuntime(authIndex string) (pluginapi.HostAuthGetRuntimeRespo
 }
 
 func isSupportedOAuthAuth(entry pluginapi.HostAuthFileEntry) bool {
-	if entry.Disabled || entry.Unavailable {
+	if entry.Disabled || isHostAuthQuotaBlocked(entry, time.Now()) {
 		return false
 	}
+	return isManagedOAuthAuth(entry)
+}
+
+func isManagedOAuthAuth(entry pluginapi.HostAuthFileEntry) bool {
 	provider := strings.ToLower(strings.TrimSpace(entry.Provider))
 	typ := strings.ToLower(strings.TrimSpace(entry.Type))
 	name := strings.ToLower(strings.TrimSpace(entry.Name))
 	if provider == "codex" || typ == "codex" {
+		return true
+	}
+	if provider == "claude" || provider == "anthropic" || typ == "claude" || typ == "anthropic" {
 		return true
 	}
 	if provider == "openai" || typ == "openai" {
@@ -95,6 +103,56 @@ func isSupportedOAuthAuth(entry pluginapi.HostAuthFileEntry) bool {
 			return false
 		}
 		return strings.Contains(name, "oauth") || strings.Contains(typ, "oauth") || strings.Contains(provider, "oauth")
+	}
+	return false
+}
+
+func isHostAuthQuotaBlocked(entry pluginapi.HostAuthFileEntry, now time.Time) bool {
+	if entry.Unavailable {
+		return true
+	}
+	if !entry.NextRetryAfter.IsZero() && entry.NextRetryAfter.After(now) {
+		return true
+	}
+	return quotaLikeText(entry.Status + " " + entry.StatusMessage)
+}
+
+func isWarmupQuotaBlocked(statusCode int, headers http.Header, body []byte, err error) bool {
+	if statusCode == http.StatusPaymentRequired || statusCode == http.StatusTooManyRequests {
+		return true
+	}
+	if statusCode == http.StatusServiceUnavailable && headers != nil && strings.TrimSpace(headers.Get("Retry-After")) != "" {
+		return true
+	}
+	text := string(body)
+	if err != nil {
+		text += " " + err.Error()
+	}
+	return quotaLikeText(text)
+}
+
+func quotaLikeText(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"quota",
+		"rate_limit",
+		"rate limit",
+		"usage_limit",
+		"usage limit",
+		"usage limit reached",
+		"exhausted",
+		"insufficient_quota",
+		"no credit",
+		"no credits",
+		"credit exhausted",
+		"too many requests",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
 	}
 	return false
 }
