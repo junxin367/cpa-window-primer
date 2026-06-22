@@ -310,14 +310,6 @@ func pluginRegistration() registration {
 			Version:          pluginVersion,
 			Author:           pluginAuthor,
 			GitHubRepository: pluginRepository,
-			ConfigFields: []pluginapi.ConfigField{
-				{Name: "auth_ids", Type: pluginapi.ConfigFieldTypeArray, Description: "Selected OAuth auth IDs to prime."},
-				{Name: "times", Type: pluginapi.ConfigFieldTypeArray, Description: "Daily target windows in HH:mm, default 07:00/12:00/17:00."},
-				{Name: "model", Type: pluginapi.ConfigFieldTypeString, Description: "Model used for the primer request."},
-				{Name: "prompt", Type: pluginapi.ConfigFieldTypeString, Description: "Prompt sent by the primer request."},
-				{Name: "min_interval", Type: pluginapi.ConfigFieldTypeString, Description: "Minimum interval between successful primers per auth."},
-				{Name: "enabled", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enables the background primer loop."},
-			},
 		},
 		Capabilities: registrationCapabilities{Scheduler: true, ManagementAPI: true},
 	}

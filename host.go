@@ -52,15 +52,20 @@ func allowedAuthIDs() (map[string]pluginapi.HostAuthFileEntry, error) {
 		if !isSupportedOAuthAuth(entry) {
 			continue
 		}
-		authID := strings.TrimSpace(entry.ID)
-		if authID == "" {
-			authID = strings.TrimSpace(entry.AuthIndex)
-		}
+		authID := authIDForEntry(entry)
 		if authID != "" {
 			out[authID] = entry
 		}
 	}
 	return out, nil
+}
+
+func authIDForEntry(entry pluginapi.HostAuthFileEntry) string {
+	authID := strings.TrimSpace(entry.ID)
+	if authID == "" {
+		authID = strings.TrimSpace(entry.AuthIndex)
+	}
+	return authID
 }
 
 func callHostAuthGetRuntime(authIndex string) (pluginapi.HostAuthGetRuntimeResponse, error) {
