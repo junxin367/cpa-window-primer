@@ -1,0 +1,24 @@
+README.md
+  s_7af7390ce4d120::t_26a841d2ea3633 3,5,7,9-14,16,18-37,43,45,52,54,56,62,64,70,82,84,87,94,103
+management.go
+  s_7af7390ce4d120::t_acf417f336b093 8,46-62,66-70,74-75,95-96,164,170,175-714,717-722,724-757,759-782
+  s_7af7390ce4d120::t_f7c898c17b4e58 715-716,723,758
+registry.json
+  s_7af7390ce4d120::t_794fd9d0dd5757 7,9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "2bf0628b672a2052861fb354f7ed16af0ea237e9",
+  "prompts": {},
+  "sessions": {
+    "s_7af7390ce4d120": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eedb2-12ef-7b70-a87b-915ea4928836",
+        "model": "gpt-5.5"
+      },
+      "human_author": "刘俊鑫 <673638712@qq.com>"
+    }
+  }
+}
