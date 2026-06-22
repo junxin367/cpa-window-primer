@@ -34,6 +34,14 @@ Use `.so` on Linux and `.dylib` on macOS.
 
 ## CPA Configuration
 
+Plugin store source URL:
+
+```text
+https://raw.githubusercontent.com/junxin367/cpa-window-primer/main/registry.json
+```
+
+The CPA plugin store expects a registry manifest URL. Do not use the GitHub repository page URL as the store source.
+
 Build the dynamic library and place it in CPA's plugin directory using a basename that matches the plugin ID:
 
 ```text

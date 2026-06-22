@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "cpa-window-primer",
+      "name": "CPA Window Primer",
+      "description": "Primes selected OAuth auth session windows by sending a small request before configured daily windows.",
+      "author": "junxin367",
+      "version": "0.1.0",
+      "repository": "https://github.com/junxin367/cpa-window-primer",
+      "homepage": "https://github.com/junxin367/cpa-window-primer",
+      "tags": ["scheduler", "management", "oauth", "openai"]
+    }
+  ]
+}
