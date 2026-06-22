@@ -1,8 +1,8 @@
-# Codex/OpenAI OAuth Warmup 插件设计
+# CPA Window Primer 插件设计
 
 ## 目标
 
-为 CLIProxyAPI 开发一个独立插件，用于对选中的 Codex/OpenAI OAuth 认证文件在指定时间窗口前发送一次轻量 `hi` 请求，提前触发约 5 小时可用窗口。
+为 CLIProxyAPI 开发一个独立插件，用于对选中的 OAuth 认证文件在指定时间窗口前发送一次轻量 `hi` 请求，提前触发约 5 小时可用窗口。当前目标范围是 Codex/OpenAI OAuth auth。
 
 默认行为：
 
@@ -23,7 +23,7 @@
 
 `host.model.execute` 当前没有直接暴露 `pinned_auth_id` metadata，因此插件通过内部 header 传递目标 auth：
 
-- warmup 请求设置 `X-CPA-Warmup-Auth-ID: <auth_id>`。
+- warmup 请求设置 `X-CPA-Window-Primer-Auth-ID: <auth_id>`。
 - 插件自己的 `scheduler.pick` 读取 `SchedulerOptions.Headers`。
 - 如果候选列表包含该 auth，则返回 `SchedulerPickResponse{Handled:true, AuthID:<auth_id>}`。
 - 若 header 缺失、auth 不在候选列表中，插件不处理本次调度，交回 CPA 默认调度逻辑。
@@ -42,7 +42,7 @@
 插件运行状态持久化到用户配置目录下的插件状态文件，例如：
 
 ```text
-<UserConfigDir>/CLIProxyAPI/codex-warmup-plugin/state.json
+<UserConfigDir>/CLIProxyAPI/cpa-window-primer/state.json
 ```
 
 状态内容包括：
@@ -99,7 +99,7 @@
 插件提供只读资源页：
 
 ```text
-/v0/resource/plugins/codex-warmup/status
+/v0/resource/plugins/cpa-window-primer/status
 ```
 
 资源页展示：
@@ -114,9 +114,9 @@
 写操作通过认证的 Management API 完成：
 
 ```text
-GET  /v0/management/codex-warmup/config
-PUT  /v0/management/codex-warmup/config
-POST /v0/management/codex-warmup/run
+GET  /v0/management/cpa-window-primer/config
+PUT  /v0/management/cpa-window-primer/config
+POST /v0/management/cpa-window-primer/run
 ```
 
 `run` 用于手动触发某个 auth 的 warmup，默认仍遵守 5 小时间隔；可设计 `force=true` 仅用于调试，但默认不暴露在 UI 主路径中。
@@ -147,7 +147,7 @@ POST /v0/management/codex-warmup/run
 仓库名：
 
 ```text
-cliproxyapi-codex-warmup-plugin
+cpa-window-primer
 ```
 
 插件使用 Go 实现并构建为 CPA C ABI 动态库：
@@ -163,10 +163,9 @@ plugins:
   enabled: true
   dir: "plugins"
   configs:
-    codex-warmup:
+    cpa-window-primer:
       enabled: true
       priority: 100
 ```
 
-插件的 scheduler 只处理带 `X-CPA-Warmup-Auth-ID` 的内部 warmup 请求，不影响普通用户请求调度。
-
+插件的 scheduler 只处理带 `X-CPA-Window-Primer-Auth-ID` 的内部 warmup 请求，不影响普通用户请求调度。
