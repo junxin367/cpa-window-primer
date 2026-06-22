@@ -3,7 +3,7 @@ package main
 const (
 	pluginID           = "cpa-window-primer"
 	pluginName         = "CPA Window Primer"
-	pluginVersion      = "0.1.2"
+	pluginVersion      = "0.1.3"
 	pluginAuthor       = "junxin367"
 	pluginRepository   = "https://github.com/junxin367/cpa-window-primer"
 	primerHeader       = "X-CPA-Window-Primer-Auth-ID"

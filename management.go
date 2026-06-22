@@ -273,21 +273,22 @@ func (a *app) renderStatusPage() []byte {
 	}
 	var out bytes.Buffer
 	out.WriteString(`<!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" style="background:#ffffff;color:#111827;">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
   <title>窗口预热</title>
   <style>
     :root {
-      color-scheme: light dark;
+      color-scheme: light;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: Canvas;
-      color: CanvasText;
+      background: #ffffff;
+      color: #111827;
       letter-spacing: 0;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; background: Canvas; color: CanvasText; }
+    body { margin: 0; background: #ffffff; color: #111827; }
     main { max-width: 1180px; margin: 0 auto; padding: 24px; }
     header { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
     h1 { margin: 0; font-size: 24px; font-weight: 760; letter-spacing: 0; }
@@ -514,6 +515,7 @@ func (a *app) renderStatusPage() []byte {
       config: '/v0/management/cpa-window-primer/config',
       run: '/v0/management/cpa-window-primer/run'
     };
+    const MANAGEMENT_KEY_STORAGE = 'cpa-window-primer.management-key';
     const state = { snapshot: normalizeSnapshot(INITIAL_DATA) };
 
     function normalizeSnapshot(input) {
@@ -544,6 +546,26 @@ func (a *app) renderStatusPage() []byte {
       return new Set(state.snapshot.config.auth_ids || []);
     }
 
+    function loadStoredManagementKey() {
+      try {
+        return window.localStorage.getItem(MANAGEMENT_KEY_STORAGE) || '';
+      } catch (error) {
+        return '';
+      }
+    }
+
+    function saveStoredManagementKey(value) {
+      try {
+        if (value) {
+          window.localStorage.setItem(MANAGEMENT_KEY_STORAGE, value);
+        } else {
+          window.localStorage.removeItem(MANAGEMENT_KEY_STORAGE);
+        }
+      } catch (error) {
+        // Ignore storage failures; the key still works for the current page session.
+      }
+    }
+
     function setStatus(message, error) {
       const box = field('connectionStatus');
       box.hidden = false;
@@ -569,11 +591,13 @@ func (a *app) renderStatusPage() []byte {
     function authHeaders() {
       const key = field('managementKey').value.trim();
       if (!key) {
+        saveStoredManagementKey('');
         setConnectionStatus('需要填写 CPA 管理密钥');
         const error = new Error('需要填写 CPA 管理密钥');
         error.connectionStatus = true;
         throw error;
       }
+      saveStoredManagementKey(key);
       clearConnectionStatus();
       return { Authorization: /^bearer\s+/i.test(key) ? key : 'Bearer ' + key };
     }
@@ -821,6 +845,13 @@ func (a *app) renderStatusPage() []byte {
       renderAuths();
     }
 
+    function restoreManagementKey() {
+      const input = field('managementKey');
+      if (!input.value) {
+        input.value = loadStoredManagementKey();
+      }
+    }
+
     async function refreshSnapshot(showMessage = true) {
       if (showMessage) clearStatus();
       try {
@@ -876,6 +907,10 @@ func (a *app) renderStatusPage() []byte {
 
     field('saveConfig').addEventListener('click', saveConfig);
     field('refreshSnapshot').addEventListener('click', refreshSnapshot);
+    field('managementKey').addEventListener('input', () => {
+      saveStoredManagementKey(field('managementKey').value.trim());
+      clearStatus();
+    });
     field('addTime').addEventListener('click', () => addTimeRow('07:00'));
     field('resetTimes').addEventListener('click', () => renderTimes(DEFAULT_TIMES));
     field('selectAllAuths').addEventListener('click', () => {
@@ -888,6 +923,7 @@ func (a *app) renderStatusPage() []byte {
       state.snapshot.config.auth_ids = [];
       renderOverview();
     });
+    restoreManagementKey();
     renderAll();
   </script>
 </body>
