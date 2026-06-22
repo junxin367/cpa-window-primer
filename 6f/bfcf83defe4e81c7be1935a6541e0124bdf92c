@@ -1,0 +1,48 @@
+.gitignore
+  s_7af7390ce4d120::t_94057199b3b4a0 1-8
+host.go
+  s_7af7390ce4d120::t_5f55bbdd314005 1-141
+go.mod
+  s_7af7390ce4d120::t_5f55bbdd314005 1-8
+examples/config.yaml
+  s_7af7390ce4d120::t_c770445653316b 1-18
+config.go
+  s_7af7390ce4d120::t_5f55bbdd314005 1-15,23,26-88,90-226,229-262
+  s_7af7390ce4d120::t_82a60107fda748 16-22,24-25,89,227-228
+management.go
+  s_7af7390ce4d120::t_5f55bbdd314005 1-194
+scripts/build.ps1
+  s_7af7390ce4d120::t_c770445653316b 1-11,13-17,19,27-28,30-32,34-38
+  s_7af7390ce4d120::t_5f55bbdd314005 12,18,20-26,29,33
+config_test.go
+  s_7af7390ce4d120::t_82a60107fda748 66-78
+  s_7af7390ce4d120::t_5f55bbdd314005 1-65
+scheduler_test.go
+  s_7af7390ce4d120::t_5f55bbdd314005 1-64,66-93
+  s_7af7390ce4d120::t_b3918836647e1e 65
+README.md
+  s_7af7390ce4d120::t_c770445653316b 5-89
+host_rpc_nocgo.go
+  s_7af7390ce4d120::t_4d2120ead71562 1-12
+runtime.go
+  s_7af7390ce4d120::t_5f55bbdd314005 1-149,153-156,158-277,281-324
+  s_7af7390ce4d120::t_82a60107fda748 150-152,157,278-280
+state.go
+  s_7af7390ce4d120::t_5f55bbdd314005 1-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "6fbfcf83defe4e81c7be1935a6541e0124bdf92c",
+  "prompts": {},
+  "sessions": {
+    "s_7af7390ce4d120": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eedb2-12ef-7b70-a87b-915ea4928836",
+        "model": "gpt-5.5"
+      },
+      "human_author": "刘俊鑫 <673638712@qq.com>"
+    }
+  }
+}
