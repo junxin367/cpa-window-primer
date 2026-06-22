@@ -1,0 +1,18 @@
+plugins:
+  enabled: true
+  dir: "plugins"
+  configs:
+    cpa-window-primer:
+      enabled: true
+      priority: 100
+      auth_ids: []
+      times:
+        - "07:00"
+        - "12:00"
+        - "17:00"
+      model: "gpt-5.4"
+      prompt: "hi"
+      min_interval: "5h"
+      lead_time: "1m"
+      tick_interval: "5s"
+
