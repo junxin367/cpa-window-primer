@@ -287,16 +287,16 @@ func (a *app) renderStatusPage() []byte {
       color: #111827;
       letter-spacing: 0;
     }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: #ffffff; color: #111827; }
-    main { max-width: 1180px; margin: 0 auto; padding: 24px; }
-    header { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
-    h1 { margin: 0; font-size: 24px; font-weight: 760; letter-spacing: 0; }
-    h2 { margin: 0 0 14px; font-size: 15px; font-weight: 720; letter-spacing: 0; }
-    h3 { margin: 0 0 10px; font-size: 13px; font-weight: 720; letter-spacing: 0; }
-    label { display: grid; gap: 7px; font-size: 13px; font-weight: 650; min-width: 0; }
-    input, select, textarea, button { font: inherit; }
-    input, select, textarea {
+    .cwp-body { margin: 0; background: #ffffff; color: #111827; }
+    .cwp-page, .cwp-page * { box-sizing: border-box; }
+    .cwp-page { max-width: 1180px; margin: 0 auto; padding: 24px; }
+    .cwp-header { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    .cwp-page h1 { margin: 0; font-size: 24px; font-weight: 760; letter-spacing: 0; }
+    .cwp-page h2 { margin: 0 0 14px; font-size: 15px; font-weight: 720; letter-spacing: 0; }
+    .cwp-page h3 { margin: 0 0 10px; font-size: 13px; font-weight: 720; letter-spacing: 0; }
+    .cwp-page label { display: grid; gap: 7px; font-size: 13px; font-weight: 650; min-width: 0; }
+    .cwp-page input, .cwp-page select, .cwp-page textarea, .cwp-page button { font: inherit; }
+    .cwp-page input, .cwp-page select, .cwp-page textarea {
       width: 100%;
       border: 1px solid color-mix(in srgb, CanvasText 18%, Canvas 82%);
       border-radius: 6px;
@@ -304,9 +304,9 @@ func (a *app) renderStatusPage() []byte {
       background: Canvas;
       color: CanvasText;
     }
-    input[type="checkbox"] { width: auto; }
-    textarea { min-height: 92px; resize: vertical; line-height: 1.45; }
-    button {
+    .cwp-page input[type="checkbox"] { width: auto; }
+    .cwp-page textarea { min-height: 92px; resize: vertical; line-height: 1.45; }
+    .cwp-page button {
       border: 0;
       border-radius: 6px;
       padding: 9px 12px;
@@ -316,11 +316,11 @@ func (a *app) renderStatusPage() []byte {
       cursor: pointer;
       white-space: nowrap;
     }
-    button.secondary { background: color-mix(in srgb, CanvasText 10%, Canvas 90%); color: CanvasText; }
-    button.warning { background: #b45309; }
-    button:disabled { opacity: .54; cursor: not-allowed; }
-    .header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: 10px; }
-    .metric {
+    .cwp-page button.cwp-secondary { background: color-mix(in srgb, CanvasText 10%, Canvas 90%); color: CanvasText; }
+    .cwp-page button.cwp-warning { background: #b45309; }
+    .cwp-page button:disabled { opacity: .54; cursor: not-allowed; }
+    .cwp-header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: 10px; }
+    .cwp-metric {
       min-height: 34px;
       display: inline-flex;
       align-items: center;
@@ -331,50 +331,51 @@ func (a *app) renderStatusPage() []byte {
       background: color-mix(in srgb, #2563eb 12%, Canvas 88%);
       color: color-mix(in srgb, #2563eb 72%, CanvasText 28%);
     }
-    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; align-items: start; }
-    .stack { display: grid; gap: 16px; }
-    .panel {
+    .cwp-layout { display: flex; gap: 16px; align-items: flex-start; width: 100%; min-width: 0; }
+    .cwp-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 16px; }
+    .cwp-side { flex: 0 0 330px; width: 330px; min-width: 0; display: grid; gap: 16px; }
+    .cwp-panel {
       border: 1px solid color-mix(in srgb, CanvasText 14%, Canvas 86%);
       border-radius: 8px;
       padding: 16px;
       background: color-mix(in srgb, Canvas 96%, CanvasText 4%);
+      min-width: 0;
     }
-    .fields { display: grid; gap: 13px; }
-    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
-    .settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; align-items: start; }
-    .wide-field { grid-column: 1 / -1; }
-    .actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
-    .actions button { width: auto; }
-    .inline { display: flex; gap: 8px; align-items: center; }
-    .inline input[type="checkbox"] { flex: 0 0 auto; margin: 0; }
-    .muted { color: color-mix(in srgb, CanvasText 62%, Canvas 38%); font-size: 12px; font-weight: 520; line-height: 1.45; }
-    .summary { display: grid; gap: 8px; }
-    .summary-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
-    .summary-row strong { font-weight: 720; }
-    .time-list { display: grid; gap: 8px; }
-    .time-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
-    .table-wrap {
+    .cwp-fields { display: grid; gap: 13px; }
+    .cwp-settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; align-items: start; }
+    .cwp-wide-field { grid-column: 1 / -1; }
+    .cwp-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
+    .cwp-actions button { width: auto; }
+    .cwp-inline { display: flex; gap: 8px; align-items: center; }
+    .cwp-inline input[type="checkbox"] { flex: 0 0 auto; margin: 0; }
+    .cwp-muted { color: color-mix(in srgb, CanvasText 62%, Canvas 38%); font-size: 12px; font-weight: 520; line-height: 1.45; }
+    .cwp-summary { display: grid; gap: 8px; }
+    .cwp-summary-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+    .cwp-summary-row strong { font-weight: 720; }
+    .cwp-time-list { display: grid; gap: 8px; }
+    .cwp-time-row { display: grid; grid-template-columns: minmax(0, 1fr) max-content; gap: 8px; align-items: center; min-width: 0; }
+    .cwp-table-wrap {
       overflow: auto;
       border: 1px solid color-mix(in srgb, CanvasText 12%, Canvas 88%);
       border-radius: 8px;
       background: Canvas;
     }
-    table { width: 100%; border-collapse: collapse; min-width: 760px; }
-    th, td {
+    .cwp-table { width: 100%; border-collapse: collapse; min-width: 760px; }
+    .cwp-table th, .cwp-table td {
       border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, Canvas 90%);
       padding: 10px;
       text-align: left;
       vertical-align: top;
       font-size: 12px;
     }
-    th { color: color-mix(in srgb, CanvasText 70%, Canvas 30%); font-weight: 720; background: color-mix(in srgb, CanvasText 4%, Canvas 96%); }
-    tr:last-child td { border-bottom: 0; }
-    code {
+    .cwp-table th { color: color-mix(in srgb, CanvasText 70%, Canvas 30%); font-weight: 720; background: color-mix(in srgb, CanvasText 4%, Canvas 96%); }
+    .cwp-table tr:last-child td { border-bottom: 0; }
+    .cwp-page code {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 11px;
       overflow-wrap: anywhere;
     }
-    .badge {
+    .cwp-badge {
       display: inline-flex;
       min-height: 24px;
       align-items: center;
@@ -384,9 +385,9 @@ func (a *app) renderStatusPage() []byte {
       font-size: 12px;
       font-weight: 700;
     }
-    .badge.ok { background: color-mix(in srgb, #16a34a 14%, Canvas 86%); color: color-mix(in srgb, #15803d 78%, CanvasText 22%); }
-    .badge.warn { background: color-mix(in srgb, #d97706 14%, Canvas 86%); color: color-mix(in srgb, #b45309 78%, CanvasText 22%); }
-    .inline-status {
+    .cwp-badge.cwp-ok { background: color-mix(in srgb, #16a34a 14%, Canvas 86%); color: color-mix(in srgb, #15803d 78%, CanvasText 22%); }
+    .cwp-badge.cwp-warn { background: color-mix(in srgb, #d97706 14%, Canvas 86%); color: color-mix(in srgb, #b45309 78%, CanvasText 22%); }
+    .cwp-inline-status {
       white-space: pre-wrap;
       word-break: break-word;
       border-radius: 6px;
@@ -397,50 +398,52 @@ func (a *app) renderStatusPage() []byte {
       font-weight: 650;
       line-height: 1.4;
     }
-    .inline-status.error {
+    .cwp-inline-status.cwp-error {
       background: color-mix(in srgb, #dc2626 10%, Canvas 90%);
       border-color: color-mix(in srgb, #dc2626 22%, Canvas 78%);
       color: color-mix(in srgb, #b91c1c 82%, CanvasText 18%);
     }
     @media (max-width: 920px) {
-      main { padding: 16px; }
-      header { display: grid; align-items: start; }
-      .header-actions { justify-content: start; }
-      .layout, .grid, .settings-grid { grid-template-columns: 1fr; }
-      .wide-field { grid-column: auto; }
-      .actions { display: grid; }
-      .actions button { width: 100%; }
+      .cwp-page { padding: 16px; }
+      .cwp-header { display: grid; align-items: start; }
+      .cwp-header-actions { justify-content: start; }
+      .cwp-layout { display: grid; grid-template-columns: 1fr; }
+      .cwp-side { width: auto; }
+      .cwp-settings-grid { grid-template-columns: 1fr; }
+      .cwp-wide-field { grid-column: auto; }
+      .cwp-actions { display: grid; }
+      .cwp-actions button { width: 100%; }
     }
   </style>
 </head>
-<body>
-  <main>
-    <header>
+<body class="cwp-body">
+  <main class="cwp-page">
+    <header class="cwp-header">
       <h1>窗口预热</h1>
-      <div class="header-actions">
-        <span class="metric" id="enabledMetric">未启用</span>
-        <span class="metric" id="selectedMetric">0 个认证文件</span>
+      <div class="cwp-header-actions">
+        <span class="cwp-metric" id="enabledMetric">未启用</span>
+        <span class="cwp-metric" id="selectedMetric">0 个认证文件</span>
       </div>
     </header>
-    <div class="layout">
-      <div class="stack">
-        <section class="panel">
+    <div class="cwp-layout">
+      <div class="cwp-main">
+        <section class="cwp-panel">
           <h2>预热设置</h2>
-          <div class="fields">
-            <label class="inline">
+          <div class="cwp-fields">
+            <label class="cwp-inline">
               <input id="enabled" type="checkbox">
               <span>启用后台预热</span>
             </label>
             <div>
               <h3>发送窗口</h3>
-              <div id="timeList" class="time-list"></div>
-              <div class="actions" style="margin-top: 9px;">
-                <button id="addTime" type="button" class="secondary">添加时间</button>
-                <button id="resetTimes" type="button" class="secondary">恢复 07:00 / 12:00 / 17:00</button>
+              <div id="timeList" class="cwp-time-list"></div>
+              <div class="cwp-actions" style="margin-top: 9px;">
+                <button id="addTime" type="button" class="cwp-secondary">添加时间</button>
+                <button id="resetTimes" type="button" class="cwp-secondary">恢复 07:00 / 12:00 / 17:00</button>
               </div>
-              <p class="muted">插件会在每个目标时间前 1 分钟内发送。如果同一认证文件距离上次成功不足 5 小时，会在该 1 分钟窗口内等待；等不到就跳过，避免提前刷新失败。</p>
+              <p class="cwp-muted">插件会在每个目标时间前 1 分钟内发送。如果同一认证文件距离上次成功不足 5 小时，会在该 1 分钟窗口内等待；等不到就跳过，避免提前刷新失败。</p>
             </div>
-            <div class="settings-grid">
+            <div class="cwp-settings-grid">
               <label><span>模型</span>
                 <input id="model" spellcheck="false" placeholder="gpt-5.4">
               </label>
@@ -453,20 +456,20 @@ func (a *app) renderStatusPage() []byte {
               <label><span>后台检查间隔</span>
                 <input id="tickInterval" spellcheck="false" placeholder="5s">
               </label>
-              <label class="wide-field"><span>预热内容</span>
+              <label class="cwp-wide-field"><span>预热内容</span>
                 <textarea id="prompt" spellcheck="false" placeholder="hi"></textarea>
               </label>
             </div>
           </div>
         </section>
-        <section class="panel">
+        <section class="cwp-panel">
           <h2>认证文件</h2>
-          <div class="actions" style="margin-bottom: 9px;">
-            <button id="selectAllAuths" type="button" class="secondary">全选</button>
-            <button id="clearAuths" type="button" class="secondary">清空选择</button>
+          <div class="cwp-actions" style="margin-bottom: 9px;">
+            <button id="selectAllAuths" type="button" class="cwp-secondary">全选</button>
+            <button id="clearAuths" type="button" class="cwp-secondary">清空选择</button>
           </div>
-          <div class="table-wrap">
-            <table>
+          <div class="cwp-table-wrap">
+            <table class="cwp-table">
               <thead>
                 <tr>
                   <th>选择</th>
@@ -483,24 +486,24 @@ func (a *app) renderStatusPage() []byte {
           </div>
         </section>
       </div>
-      <div class="stack">
-        <section class="panel">
+      <div class="cwp-side">
+        <section class="cwp-panel">
           <h2>连接</h2>
-          <div class="fields">
+          <div class="cwp-fields">
             <label><span>CPA 管理密钥</span>
               <input id="managementKey" type="password" autocomplete="off" spellcheck="false">
             </label>
-            <p class="muted">刷新状态、保存配置和手动预热需要 CPA 管理密钥。已保存的后台预热不依赖本页面持续填写；密钥只用于本次页面请求，不会保存。</p>
-            <div class="actions">
+            <p class="cwp-muted">刷新状态、保存配置和手动预热需要 CPA 管理密钥。已保存的后台预热不依赖本页面持续填写；密钥只用于本次页面请求，不会保存。</p>
+            <div class="cwp-actions">
               <button id="saveConfig" type="button">保存配置</button>
-              <button id="refreshSnapshot" type="button" class="secondary">刷新状态</button>
+              <button id="refreshSnapshot" type="button" class="cwp-secondary">刷新状态</button>
             </div>
-            <div id="connectionStatus" class="inline-status" hidden></div>
+            <div id="connectionStatus" class="cwp-inline-status" hidden></div>
           </div>
         </section>
-        <section class="panel">
+        <section class="cwp-panel">
           <h2>运行概览</h2>
-          <div class="summary" id="overview"></div>
+          <div class="cwp-summary" id="overview"></div>
         </section>
       </div>
     </div>
@@ -570,14 +573,14 @@ func (a *app) renderStatusPage() []byte {
       const box = field('connectionStatus');
       box.hidden = false;
       box.textContent = message;
-      box.className = 'inline-status' + (error ? ' error' : '');
+      box.className = 'cwp-inline-status' + (error ? ' cwp-error' : '');
     }
 
     function clearStatus() {
       const box = field('connectionStatus');
       box.hidden = true;
       box.textContent = '';
-      box.className = 'inline-status';
+      box.className = 'cwp-inline-status';
     }
 
     function setConnectionStatus(message) {
@@ -687,7 +690,7 @@ func (a *app) renderStatusPage() []byte {
       box.textContent = '';
       for (const row of rows) {
         const item = document.createElement('div');
-        item.className = 'summary-row';
+        item.className = 'cwp-summary-row';
         const key = document.createElement('span');
         key.textContent = row[0];
         const value = document.createElement('strong');
@@ -720,18 +723,18 @@ func (a *app) renderStatusPage() []byte {
     function addTimeRow(value) {
       const list = field('timeList');
       const row = document.createElement('div');
-      row.className = 'time-row';
+      row.className = 'cwp-time-row';
       const input = document.createElement('input');
       input.type = 'time';
-      input.className = 'time-input';
+      input.className = 'cwp-time-input';
       input.value = value || '07:00';
       const remove = document.createElement('button');
       remove.type = 'button';
-      remove.className = 'secondary';
+      remove.className = 'cwp-secondary';
       remove.textContent = '删除';
       remove.addEventListener('click', () => {
         row.remove();
-        if (!document.querySelector('.time-input')) addTimeRow('07:00');
+        if (!document.querySelector('.cwp-time-input')) addTimeRow('07:00');
       });
       row.appendChild(input);
       row.appendChild(remove);
@@ -739,11 +742,11 @@ func (a *app) renderStatusPage() []byte {
     }
 
     function collectTimes() {
-      return uniqueSorted(Array.from(document.querySelectorAll('.time-input')).map((input) => input.value));
+      return uniqueSorted(Array.from(document.querySelectorAll('.cwp-time-input')).map((input) => input.value));
     }
 
     function collectAuthIDs() {
-      return Array.from(document.querySelectorAll('.auth-check:checked:not(:disabled)')).map((item) => item.dataset.authId);
+      return Array.from(document.querySelectorAll('.cwp-auth-check:checked:not(:disabled)')).map((item) => item.dataset.authId);
     }
 
     function collectConfig() {
@@ -779,7 +782,7 @@ func (a *app) renderStatusPage() []byte {
         const selectTd = document.createElement('td');
         const check = document.createElement('input');
         check.type = 'checkbox';
-        check.className = 'auth-check';
+        check.className = 'cwp-auth-check';
         check.dataset.authId = auth.id;
         check.disabled = !selectable;
         check.checked = selectable && selected.has(auth.id);
@@ -795,12 +798,12 @@ func (a *app) renderStatusPage() []byte {
         code.textContent = auth.name || auth.id;
         nameTd.appendChild(code);
         const idLine = document.createElement('div');
-        idLine.className = 'muted';
+        idLine.className = 'cwp-muted';
         idLine.textContent = auth.id;
         nameTd.appendChild(idLine);
         if (auth.provider) {
           const providerLine = document.createElement('div');
-          providerLine.className = 'muted';
+          providerLine.className = 'cwp-muted';
           providerLine.textContent = auth.provider;
           nameTd.appendChild(providerLine);
         }
@@ -809,7 +812,7 @@ func (a *app) renderStatusPage() []byte {
         tr.appendChild(createCell(auth.email || auth.label || '无'));
         const statusTd = document.createElement('td');
         const badge = document.createElement('span');
-        badge.className = 'badge ' + (selectable && String(auth.status).toLowerCase() === 'active' ? 'ok' : 'warn');
+        badge.className = 'cwp-badge ' + (selectable && String(auth.status).toLowerCase() === 'active' ? 'cwp-ok' : 'cwp-warn');
         badge.textContent = auth.status || '未知';
         statusTd.appendChild(badge);
         const details = [];
@@ -818,7 +821,7 @@ func (a *app) renderStatusPage() []byte {
         if (auth.status_message && auth.status_message !== auth.blocked_reason) details.push(auth.status_message);
         if (details.length) {
           const detail = document.createElement('div');
-          detail.className = 'muted';
+          detail.className = 'cwp-muted';
           detail.textContent = details.join('；');
           statusTd.appendChild(detail);
         }
@@ -829,7 +832,7 @@ func (a *app) renderStatusPage() []byte {
         const actionTd = document.createElement('td');
         const run = document.createElement('button');
         run.type = 'button';
-        run.className = 'secondary';
+        run.className = 'cwp-secondary';
         run.textContent = '立即预热';
         run.disabled = !selectable;
         run.addEventListener('click', () => runWarmup(auth.id, false));
@@ -914,12 +917,12 @@ func (a *app) renderStatusPage() []byte {
     field('addTime').addEventListener('click', () => addTimeRow('07:00'));
     field('resetTimes').addEventListener('click', () => renderTimes(DEFAULT_TIMES));
     field('selectAllAuths').addEventListener('click', () => {
-      for (const item of document.querySelectorAll('.auth-check:not(:disabled)')) item.checked = true;
+      for (const item of document.querySelectorAll('.cwp-auth-check:not(:disabled)')) item.checked = true;
       state.snapshot.config.auth_ids = collectAuthIDs();
       renderOverview();
     });
     field('clearAuths').addEventListener('click', () => {
-      for (const item of document.querySelectorAll('.auth-check')) item.checked = false;
+      for (const item of document.querySelectorAll('.cwp-auth-check')) item.checked = false;
       state.snapshot.config.auth_ids = [];
       renderOverview();
     });
