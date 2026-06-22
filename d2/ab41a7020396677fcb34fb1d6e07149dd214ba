@@ -1,0 +1,22 @@
+.github/workflows/release.yml
+  s_7af7390ce4d120::t_f416147a9ec368 2-3,5-7,9-12,16,34-35,37-62,76-87,92-95,99-102,104-113,115-117
+  s_7af7390ce4d120::t_8348891c28539e 1,4,8,13-15,17-33,36,63-75,88-91,96-98,103,114,118-131
+registry.json
+  s_7af7390ce4d120::t_f416147a9ec368 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "d2ab41a7020396677fcb34fb1d6e07149dd214ba",
+  "prompts": {},
+  "sessions": {
+    "s_7af7390ce4d120": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eedb2-12ef-7b70-a87b-915ea4928836",
+        "model": "gpt-5.5"
+      },
+      "human_author": "刘俊鑫 <673638712@qq.com>"
+    }
+  }
+}
