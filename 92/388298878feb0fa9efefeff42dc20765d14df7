@@ -1,0 +1,23 @@
+registry.json
+  s_7af7390ce4d120::t_bef80785741fe5 9
+management.go
+  s_7af7390ce4d120::t_b8be529f965240 507
+  s_7af7390ce4d120::t_07fa0e083a80c1 700-701
+  s_7af7390ce4d120::t_d92fffa536240c 732,735,737,739-741,916-924
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "92388298878feb0fa9efefeff42dc20765d14df7",
+  "prompts": {},
+  "sessions": {
+    "s_7af7390ce4d120": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eedb2-12ef-7b70-a87b-915ea4928836",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "刘俊鑫 <673638712@qq.com>"
+    }
+  }
+}
