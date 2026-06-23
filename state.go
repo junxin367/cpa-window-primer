@@ -176,7 +176,11 @@ func (s *pluginState) recordAttempt(authID string, record attemptRecord) {
 	}
 	if record.Success {
 		at := record.At
-		item.LastSuccessAt = &at
+		// 手动预热（windowKey 以 "manual-" 开头）不更新 LastSuccessAt，
+		// 避免影响后台定时窗口的 5 小时间隔判断。
+		if !strings.HasPrefix(record.WindowKey, "manual-") {
+			item.LastSuccessAt = &at
+		}
 		item.QuotaBlockedAt = nil
 		item.QuotaBlockedUntil = nil
 		item.QuotaBlockedReason = ""

@@ -998,7 +998,7 @@ func (a *app) renderStatusPage() []byte {
         if (data && data.success === false) {
           setStatus('预热未生效：' + humanizeError(data.error || ''), true);
         } else {
-          setStatus('手动预热完成。');
+          setStatus('手动预热完成，不影响后台定时计划。');
         }
       } catch (error) {
         if (error.connectionStatus) return;
