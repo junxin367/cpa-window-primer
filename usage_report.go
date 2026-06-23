@@ -107,12 +107,13 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 		// 5h 限额：周用完（100%）时按 0 可用计入，即贡献 100% used。
 		if primary.HasData {
 			effectivePrimary := primary.UsedPercent
-			if secondary.HasData && secondary.UsedPercent >= 100 {
+			secondaryExhausted := secondary.HasData && secondary.UsedPercent >= 100
+			if secondaryExhausted {
 				effectivePrimary = 100
 			}
 			primaryUsedWeighted += effectivePrimary * e.Weight
 			primaryTotalWeight += e.Weight
-			if primary.ResetAt.After(latestPrimaryReset) {
+			if !secondaryExhausted && primary.ResetAt.After(latestPrimaryReset) {
 				latestPrimaryReset = primary.ResetAt
 			}
 			any = true

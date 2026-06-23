@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestCodexPlanWeightMatchesCPAManager(t *testing.T) {
 	tests := []struct {
@@ -59,5 +62,43 @@ func TestAggregateCodexGroupUsesPlanWeights(t *testing.T) {
 	}
 	if got.SecondaryPercent != wantSecondary {
 		t.Fatalf("SecondaryPercent = %v, want %v", got.SecondaryPercent, wantSecondary)
+	}
+}
+
+func TestAggregateCodexGroupTreatsWeeklyExhaustedAsNoPrimaryQuota(t *testing.T) {
+	proReset := time.Date(2026, 6, 23, 16, 59, 0, 0, time.UTC)
+	plusReset := time.Date(2026, 6, 23, 19, 54, 0, 0, time.UTC)
+	entries := []usageEntry{
+		{
+			Provider: "codex",
+			Plan:     "pro",
+			Weight:   codexPlanWeight("pro"),
+			// Screenshot shows remaining 61% / 55%, upstream used values are 39% / 45%.
+			Primary:   usageWindow{UsedPercent: 39, ResetAt: proReset, HasData: true},
+			Secondary: usageWindow{UsedPercent: 45, HasData: true},
+		},
+		{
+			Provider:  "codex",
+			Plan:      "plus",
+			Weight:    codexPlanWeight("plus"),
+			Primary:   usageWindow{UsedPercent: 1, ResetAt: plusReset, HasData: true},
+			Secondary: usageWindow{UsedPercent: 100, HasData: true},
+		},
+		{
+			Provider:  "codex",
+			Plan:      "plus",
+			Weight:    codexPlanWeight("plus"),
+			Primary:   usageWindow{UsedPercent: 1, ResetAt: plusReset, HasData: true},
+			Secondary: usageWindow{UsedPercent: 100, HasData: true},
+		},
+	}
+
+	got := aggregateGroup(entries, false)
+	wantUsed := (39*20 + 100*1 + 100*1) / 22.0
+	if got.PrimaryPercent != wantUsed {
+		t.Fatalf("PrimaryPercent = %v, want %v", got.PrimaryPercent, wantUsed)
+	}
+	if !got.PrimaryReset.Equal(proReset) {
+		t.Fatalf("PrimaryReset = %s, want %s", got.PrimaryReset, proReset)
 	}
 }
