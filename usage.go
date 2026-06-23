@@ -160,8 +160,7 @@ func (w codexWindowJSON) toWindow() usageWindow {
 	return out
 }
 
-// fetchClaudeUsage 拉取 Claude 套餐信息。Claude 的额度百分比当前接口未提供，
-// 仅解析套餐倍数，额度窗口留待后续补充数据源。
+// fetchClaudeUsage 先调 profile 拿套餐，再调 usage 拿 5 小时/周/Sonnet 额度。
 func fetchClaudeUsage(authID, email, plan string) usageEntry {
 	entry := usageEntry{AuthID: authID, Provider: "claude", Email: email, Plan: plan}
 	entry.Weight = claudePlanWeight(plan)
@@ -184,6 +183,22 @@ func fetchClaudeUsage(authID, email, plan string) usageEntry {
 		return entry
 	}
 	parseClaudeProfileBody(resp.Body, &entry)
+
+	// 再拉额度。额度拉取失败不覆盖已获取的套餐信息。
+	usageResp, usageErr := callHostHTTPDo(http.MethodGet, claudeUsageURL, headers, nil)
+	if usageErr != nil {
+		if entry.Err == "" {
+			entry.Err = usageErr.Error()
+		}
+		return entry
+	}
+	if usageResp.StatusCode < 200 || usageResp.StatusCode >= 300 {
+		if entry.Err == "" {
+			entry.Err = fmt.Sprintf("usage status %d", usageResp.StatusCode)
+		}
+		return entry
+	}
+	parseClaudeUsageBody(usageResp.Body, &entry)
 	return entry
 }
 
@@ -214,6 +229,47 @@ func parseClaudeProfileBody(body []byte, entry *usageEntry) {
 }
 
 // claudePlanFromProfile 把 profile 字段归一为套餐键。
+// claudeUsageWindowJSON 是 Claude usage 接口的单窗口结构。
+type claudeUsageWindowJSON struct {
+	Utilization float64 `json:"utilization"`
+	ResetsAt    string  `json:"resets_at"`
+}
+
+func (w claudeUsageWindowJSON) toWindow() usageWindow {
+	out := usageWindow{UsedPercent: w.Utilization, HasData: true}
+	if strings.TrimSpace(w.ResetsAt) != "" {
+		if t, err := time.Parse(time.RFC3339, w.ResetsAt); err == nil {
+			out.ResetAt = t
+		}
+	}
+	return out
+}
+
+// parseClaudeUsageBody 解析 Claude 额度：five_hour / seven_day / seven_day_sonnet。
+func parseClaudeUsageBody(body []byte, entry *usageEntry) {
+	var doc struct {
+		FiveHour       *claudeUsageWindowJSON `json:"five_hour"`
+		SevenDay       *claudeUsageWindowJSON `json:"seven_day"`
+		SevenDaySonnet *claudeUsageWindowJSON `json:"seven_day_sonnet"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		if entry.Err == "" {
+			entry.Err = "parse usage: " + err.Error()
+		}
+		return
+	}
+	if doc.FiveHour != nil {
+		entry.Primary = doc.FiveHour.toWindow()
+	}
+	if doc.SevenDay != nil {
+		entry.Secondary = doc.SevenDay.toWindow()
+	}
+	if doc.SevenDaySonnet != nil {
+		entry.SonnetSecondary = doc.SevenDaySonnet.toWindow()
+		entry.HasSonnet = true
+	}
+}
+
 func claudePlanFromProfile(tier, orgType string, hasMax, hasPro bool) string {
 	tier = strings.ToLower(strings.TrimSpace(tier))
 	switch {

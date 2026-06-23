@@ -3,7 +3,7 @@ package main
 const (
 	pluginID           = "cpa-window-primer"
 	pluginName         = "CPA Window Primer"
-	pluginVersion      = "0.2.0"
+	pluginVersion      = "0.2.1"
 	pluginAuthor       = "junxin367"
 	pluginRepository   = "https://github.com/junxin367/cpa-window-primer"
 	primerHeader       = "X-CPA-Window-Primer-Auth-ID"
@@ -18,6 +18,7 @@ const (
 	// 额度查询上游接口。
 	codexUsageURL  = "https://chatgpt.com/backend-api/wham/usage"
 	claudeProfileURL = "https://api.anthropic.com/api/oauth/profile"
+	claudeUsageURL   = "https://api.anthropic.com/api/oauth/usage"
 	claudeOAuthBeta  = "oauth-2025-04-20"
 )
 
