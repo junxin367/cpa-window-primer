@@ -3,7 +3,7 @@ package main
 const (
 	pluginID           = "cpa-window-primer"
 	pluginName         = "CPA Window Primer"
-	pluginVersion      = "0.2.5"
+	pluginVersion      = "0.2.6"
 	pluginAuthor       = "junxin367"
 	pluginRepository   = "https://github.com/junxin367/cpa-window-primer"
 	primerHeader       = "X-CPA-Window-Primer-Auth-ID"
@@ -22,12 +22,15 @@ const (
 	claudeOAuthBeta  = "oauth-2025-04-20"
 )
 
-// 套餐 → 相对 Plus 的额度倍数。Codex：1个 Plus = 1；1个 Pro = ?；20x pro = 20；5x pro = 5。
+// 套餐 → 相对 Plus 的额度倍数。Codex 管理中心显示：plus = 1，pro = Pro 20x，prolite = Pro 5x。
 // Claude：Max = 5 个 Pro。这里以 Plus 为基准单位，数值可后续调整。
 var codexPlanMultiplier = map[string]float64{
 	"free":     0,
 	"plus":     1,
-	"pro":      5,
+	"pro":      20,
+	"prolite":  5,
+	"pro-lite": 5,
+	"pro_lite": 5,
 	"pro_20x":  20,
 	"team":     1,
 	"business": 1,
