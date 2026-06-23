@@ -899,7 +899,12 @@ func (a *app) renderStatusPage() []byte {
         badge.textContent = statusLabel(auth);
         statusTd.appendChild(badge);
         const details = [];
-        if (!isActive && auth.blocked_reason) details.push(humanizeError(auth.blocked_reason));
+        // badge 已显示了友好化状态，不再重复追加相同语义的消息。
+        const badgeText = badge.textContent;
+        if (!isActive && auth.blocked_reason) {
+          const friendlyReason = humanizeError(auth.blocked_reason);
+          if (friendlyReason !== badgeText) details.push(friendlyReason);
+        }
         if (details.length) {
           const detail = document.createElement('div');
           detail.className = 'cwp-muted';
