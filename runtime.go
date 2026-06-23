@@ -20,6 +20,8 @@ type app struct {
 	runID     uint64
 	pending   map[string]uint64
 	lastError string
+	// lastUsagePushKey 记录最近一次额度推送的窗口键（日期+时钟），避免重复推送。
+	lastUsagePushKey string
 }
 
 func newApp() *app {
@@ -103,12 +105,14 @@ func (a *app) worker(stop <-chan struct{}, interval time.Duration, runID uint64)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	a.runDue(time.Now(), stop, runID)
+	a.runUsagePushDue(time.Now())
 	for {
 		select {
 		case <-stop:
 			return
 		case now := <-ticker.C:
 			a.runDue(now, stop, runID)
+			a.runUsagePushDue(now)
 		}
 	}
 }

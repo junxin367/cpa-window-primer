@@ -77,6 +77,8 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPut, Path: "/" + pluginID + "/config", Description: "更新窗口预热插件配置。"},
 			{Method: http.MethodGet, Path: "/" + pluginID + "/state", Description: "返回窗口预热插件运行状态。"},
 			{Method: http.MethodPost, Path: "/" + pluginID + "/run", Description: "手动执行一次窗口预热请求。"},
+			{Method: http.MethodGet, Path: "/" + pluginID + "/usage", Description: "采集并返回额度汇总。"},
+			{Method: http.MethodPost, Path: "/" + pluginID + "/usage-push", Description: "立即推送一次额度汇总到 webhook。"},
 		},
 		Resources: []resourceRoute{{
 			Path:        "/status",
@@ -117,6 +119,13 @@ func (a *app) handleManagement(raw []byte) ([]byte, error) {
 		return okEnvelope(jsonResponse(http.StatusOK, map[string]any{"state": state, "last_error": lastErr}))
 	case method == http.MethodPost && strings.HasSuffix(path, "/run"):
 		return a.handleManualRun(req)
+	case method == http.MethodGet && strings.HasSuffix(path, "/usage"):
+		return okEnvelope(jsonResponse(http.StatusOK, a.usageSnapshot()))
+	case method == http.MethodPost && strings.HasSuffix(path, "/usage-push"):
+		if err := a.pushUsage(); err != nil {
+			return okEnvelope(jsonResponse(http.StatusBadGateway, map[string]string{"error": err.Error()}))
+		}
+		return okEnvelope(jsonResponse(http.StatusOK, map[string]string{"status": "ok"}))
 	default:
 		return okEnvelope(jsonResponse(http.StatusNotFound, map[string]string{"error": "not found"}))
 	}
@@ -531,6 +540,31 @@ func (a *app) renderStatusPage() []byte {
           <h2>运行概览</h2>
           <div class="cwp-summary" id="overview"></div>
         </section>
+        <section class="cwp-panel">
+          <h2>额度推送</h2>
+          <div class="cwp-fields">
+            <label class="cwp-inline">
+              <input id="usagePushEnabled" type="checkbox">
+              <span>开启定时推送</span>
+            </label>
+            <label><span>企微 / Webhook 地址</span>
+              <input id="webhookUrl" spellcheck="false" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...">
+            </label>
+            <div>
+              <h3>推送时间</h3>
+              <div id="pushTimeList" class="cwp-time-list"></div>
+              <div class="cwp-actions" style="margin-top: 9px;">
+                <button id="addPushTime" type="button" class="cwp-secondary">添加时间</button>
+              </div>
+              <p class="cwp-muted">汇总已选 Codex / Claude 认证文件的 5 小时与周限额，到点推送到 webhook。</p>
+            </div>
+            <div class="cwp-actions">
+              <button id="refreshUsage" type="button" class="cwp-secondary">预览额度</button>
+              <button id="pushUsageNow" type="button" class="cwp-secondary">立即推送</button>
+            </div>
+            <div class="cwp-summary" id="usagePreview"></div>
+          </div>
+        </section>
       </div>
     </div>
   </main>
@@ -542,7 +576,9 @@ func (a *app) renderStatusPage() []byte {
     const ENDPOINTS = {
       snapshot: '/v0/management/cpa-window-primer/snapshot',
       config: '/v0/management/cpa-window-primer/config',
-      run: '/v0/management/cpa-window-primer/run'
+      run: '/v0/management/cpa-window-primer/run',
+      usage: '/v0/management/cpa-window-primer/usage',
+      usagePush: '/v0/management/cpa-window-primer/usage-push'
     };
     const MANAGEMENT_KEY_STORAGE = 'cpa-window-primer.management-key';
     const state = { snapshot: normalizeSnapshot(INITIAL_DATA) };
@@ -559,7 +595,10 @@ func (a *app) renderStatusPage() []byte {
           prompt: config.prompt || 'hi',
           min_interval: config.min_interval || '5h',
           lead_time: config.lead_time || '1m',
-          tick_interval: config.tick_interval || '5s'
+          tick_interval: config.tick_interval || '5s',
+          webhook_url: config.webhook_url || '',
+          usage_push_enabled: config.usage_push_enabled === true,
+          usage_push_times: Array.isArray(config.usage_push_times) ? config.usage_push_times : []
         },
         auths: Array.isArray(data.auths) ? data.auths : [],
         state: data.state && typeof data.state === 'object' ? data.state : { auths: {} },
@@ -791,32 +830,41 @@ func (a *app) renderStatusPage() []byte {
       field('leadTime').value = config.lead_time || '1m';
       field('tickInterval').value = config.tick_interval || '5s';
       renderTimes(config.times || DEFAULT_TIMES);
+      field('webhookUrl').value = config.webhook_url || '';
+      field('usagePushEnabled').checked = config.usage_push_enabled === true;
+      renderPushTimes(config.usage_push_times || []);
     }
 
     function renderTimes(times) {
-      const list = field('timeList');
+      renderTimeList('timeList', 'cwp-time-input', times, DEFAULT_TIMES);
+    }
+
+    function renderPushTimes(times) {
+      renderTimeList('pushTimeList', 'cwp-push-time-input', times || [], []);
+    }
+
+    function renderTimeList(listID, inputClass, times, fallback) {
+      const list = field(listID);
       list.textContent = '';
-      for (const value of uniqueSorted(times.length ? times : DEFAULT_TIMES)) {
-        addTimeRow(value);
+      const values = uniqueSorted((times && times.length) ? times : fallback);
+      for (const value of values) {
+        addTimeRow(listID, inputClass, value);
       }
     }
 
-    function addTimeRow(value) {
-      const list = field('timeList');
+    function addTimeRow(listID, inputClass, value) {
+      const list = field(listID);
       const row = document.createElement('div');
       row.className = 'cwp-time-row';
       const input = document.createElement('input');
       input.type = 'time';
-      input.className = 'cwp-time-input';
-      input.value = value || '07:00';
+      input.className = inputClass;
+      input.value = value || '09:00';
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.className = 'cwp-secondary';
       remove.textContent = '删除';
-      remove.addEventListener('click', () => {
-        row.remove();
-        if (!document.querySelector('.cwp-time-input')) addTimeRow('07:00');
-      });
+      remove.addEventListener('click', () => { row.remove(); });
       row.appendChild(input);
       row.appendChild(remove);
       list.appendChild(row);
@@ -824,6 +872,10 @@ func (a *app) renderStatusPage() []byte {
 
     function collectTimes() {
       return uniqueSorted(Array.from(document.querySelectorAll('.cwp-time-input')).map((input) => input.value));
+    }
+
+    function collectPushTimes() {
+      return uniqueSorted(Array.from(document.querySelectorAll('.cwp-push-time-input')).map((input) => input.value));
     }
 
     function collectAuthIDs() {
@@ -839,7 +891,10 @@ func (a *app) renderStatusPage() []byte {
         prompt: field('prompt').value.trim() || 'hi',
         min_interval: field('minInterval').value.trim() || '5h',
         lead_time: field('leadTime').value.trim() || '1m',
-        tick_interval: field('tickInterval').value.trim() || '5s'
+        tick_interval: field('tickInterval').value.trim() || '5s',
+        webhook_url: field('webhookUrl').value.trim(),
+        usage_push_enabled: field('usagePushEnabled').checked,
+        usage_push_times: collectPushTimes()
       };
     }
 
@@ -964,6 +1019,73 @@ func (a *app) renderStatusPage() []byte {
       }
     }
 
+    async function refreshUsage(showMessage) {
+      if (showMessage) clearStatus();
+      try {
+        const response = await fetch(ENDPOINTS.usage, { headers: authHeaders() });
+        const data = await readJSON(response);
+        if (!response.ok) throw new Error(formatError(data, '额度预览失败'));
+        renderUsage(data);
+        if (showMessage) setStatus('额度已刷新。');
+      } catch (error) {
+        if (error.connectionStatus) return;
+        setStatus(error.message || String(error), true);
+      }
+    }
+
+    function renderUsage(data) {
+      const box = field('usagePreview');
+      box.textContent = '';
+      const groups = (data && Array.isArray(data.groups)) ? data.groups : [];
+      if (!groups.length) {
+        const empty = document.createElement('div');
+        empty.className = 'cwp-muted';
+        empty.textContent = '暂无额度数据，请先选择 Codex / Claude 认证文件。';
+        box.appendChild(empty);
+        return;
+      }
+      for (const g of groups) {
+        const title = document.createElement('div');
+        title.className = 'cwp-summary-row';
+        const k = document.createElement('span');
+        k.textContent = g.label;
+        const v = document.createElement('strong');
+        v.textContent = g.has_data ? '' : '无数据';
+        title.appendChild(k); title.appendChild(v);
+        box.appendChild(title);
+        if (g.has_data) {
+          box.appendChild(usageLine('5小时限额', g.primary_percent, g.primary_reset));
+          box.appendChild(usageLine('周限额', g.secondary_percent, g.secondary_reset));
+        }
+      }
+    }
+
+    function usageLine(label, percent, reset) {
+      const row = document.createElement('div');
+      row.className = 'cwp-summary-row';
+      const k = document.createElement('span');
+      k.className = 'cwp-muted';
+      k.textContent = label;
+      const v = document.createElement('strong');
+      const pct = Math.round(Number(percent) || 0);
+      v.textContent = pct + '%' + (reset ? '   ' + reset : '');
+      row.appendChild(k); row.appendChild(v);
+      return row;
+    }
+
+    async function pushUsageNow() {
+      clearStatus();
+      try {
+        const response = await fetch(ENDPOINTS.usagePush, { method: 'POST', headers: authHeaders() });
+        const data = await readJSON(response);
+        if (!response.ok) throw new Error(formatError(data, '推送失败'));
+        setStatus('额度已推送到 webhook。');
+      } catch (error) {
+        if (error.connectionStatus) return;
+        setStatus(error.message || String(error), true);
+      }
+    }
+
     async function saveConfig() {
       clearStatus();
       try {
@@ -1012,8 +1134,11 @@ func (a *app) renderStatusPage() []byte {
       saveStoredManagementKey(field('managementKey').value.trim());
       clearStatus();
     });
-    field('addTime').addEventListener('click', () => addTimeRow('07:00'));
+    field('addTime').addEventListener('click', () => addTimeRow('timeList', 'cwp-time-input', '07:00'));
     field('resetTimes').addEventListener('click', () => renderTimes(DEFAULT_TIMES));
+    field('addPushTime').addEventListener('click', () => addTimeRow('pushTimeList', 'cwp-push-time-input', '09:00'));
+    field('pushUsageNow').addEventListener('click', pushUsageNow);
+    field('refreshUsage').addEventListener('click', () => refreshUsage(true));
     field('selectAllAuths').addEventListener('click', () => {
       for (const item of document.querySelectorAll('.cwp-auth-check:not(:disabled)')) item.checked = true;
       state.snapshot.config.auth_ids = collectAuthIDs();

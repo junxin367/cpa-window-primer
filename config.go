@@ -23,6 +23,10 @@ type pluginConfig struct {
 	TickInterval string   `json:"tick_interval" yaml:"tick_interval"`
 	StatePath    string   `json:"state_path" yaml:"state_path"`
 	ConfigPath   string   `json:"config_path" yaml:"config_path"`
+	// 额度推送相关配置。
+	WebhookURL      string   `json:"webhook_url" yaml:"webhook_url"`
+	UsagePushEnabled bool    `json:"usage_push_enabled" yaml:"usage_push_enabled"`
+	UsagePushTimes  []string `json:"usage_push_times" yaml:"usage_push_times"`
 }
 
 type pluginConfigPatch struct {
@@ -36,6 +40,9 @@ type pluginConfigPatch struct {
 	TickInterval *string   `json:"tick_interval"`
 	StatePath    *string   `json:"state_path"`
 	ConfigPath   *string   `json:"config_path"`
+	WebhookURL       *string   `json:"webhook_url"`
+	UsagePushEnabled *bool     `json:"usage_push_enabled"`
+	UsagePushTimes   *[]string `json:"usage_push_times"`
 }
 
 type runtimeConfig struct {
@@ -44,6 +51,7 @@ type runtimeConfig struct {
 	MinDuration  time.Duration
 	LeadDuration time.Duration
 	TickDuration time.Duration
+	UsagePushClocks []clockTime
 }
 
 func defaultPluginConfig() pluginConfig {
@@ -127,6 +135,27 @@ func normalizeConfig(cfg pluginConfig) (runtimeConfig, error) {
 		cfg.Times = append(cfg.Times, clock.String())
 	}
 
+	cfg.WebhookURL = strings.TrimSpace(cfg.WebhookURL)
+	cfg.UsagePushTimes = uniqueTrimmed(cfg.UsagePushTimes)
+	usageClocks := make([]clockTime, 0, len(cfg.UsagePushTimes))
+	for _, item := range cfg.UsagePushTimes {
+		clock, err := parseClock(item)
+		if err != nil {
+			return runtimeConfig{}, err
+		}
+		usageClocks = append(usageClocks, clock)
+	}
+	sort.Slice(usageClocks, func(i, j int) bool {
+		if usageClocks[i].Hour == usageClocks[j].Hour {
+			return usageClocks[i].Minute < usageClocks[j].Minute
+		}
+		return usageClocks[i].Hour < usageClocks[j].Hour
+	})
+	cfg.UsagePushTimes = make([]string, 0, len(usageClocks))
+	for _, clock := range usageClocks {
+		cfg.UsagePushTimes = append(cfg.UsagePushTimes, clock.String())
+	}
+
 	minDuration, err := time.ParseDuration(cfg.MinInterval)
 	if err != nil {
 		return runtimeConfig{}, fmt.Errorf("invalid min_interval %q: %w", cfg.MinInterval, err)
@@ -149,6 +178,7 @@ func normalizeConfig(cfg pluginConfig) (runtimeConfig, error) {
 		MinDuration:  minDuration,
 		LeadDuration: leadDuration,
 		TickDuration: tickDuration,
+		UsagePushClocks: usageClocks,
 	}, nil
 }
 
@@ -223,6 +253,15 @@ func mergeConfigPatch(current pluginConfig, raw []byte) (pluginConfig, error) {
 	}
 	if patch.TickInterval != nil {
 		next.TickInterval = *patch.TickInterval
+	}
+	if patch.WebhookURL != nil {
+		next.WebhookURL = *patch.WebhookURL
+	}
+	if patch.UsagePushEnabled != nil {
+		next.UsagePushEnabled = *patch.UsagePushEnabled
+	}
+	if patch.UsagePushTimes != nil {
+		next.UsagePushTimes = append([]string(nil), (*patch.UsagePushTimes)...)
 	}
 	// Runtime management updates intentionally ignore path fields. Paths are
 	// boot-time/operator settings and must not become arbitrary API writes.
