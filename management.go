@@ -504,7 +504,7 @@ func (a *app) renderStatusPage() []byte {
                   <th>账号</th>
                   <th>状态</th>
                   <th>最近成功</th>
-                  <th>最近尝试</th>
+                  <th>最近预热</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -697,8 +697,8 @@ func (a *app) renderStatusPage() []byte {
 
     function attemptText(record) {
       if (!record) return '无';
-      if (record.success) return '成功 ' + formatTime(record.at);
-      return '未生效 ' + formatTime(record.at) + (record.error ? '：' + humanizeError(record.error) : '');
+      if (record.success) return '成功';
+      return '未生效' + (record.error ? '：' + humanizeError(record.error) : '');
     }
 
     function humanizeError(raw) {
@@ -729,16 +729,16 @@ func (a *app) renderStatusPage() []byte {
       if (authState && authState.quota_blocked_until) {
         const until = new Date(authState.quota_blocked_until);
         if (!Number.isNaN(until.getTime()) && Date.now() < until.getTime()) {
-          return '无额度/限流忽略至 ' + until.toLocaleString('zh-CN', { hour12: false });
+          return '额度已满，忽略至 ' + until.toLocaleString('zh-CN', { hour12: false });
         }
       }
-      if (!authState || !authState.last_success_at) return '现在可发送';
+      if (!authState || !authState.last_success_at) return '可立即发送';
       const duration = parseDuration(state.snapshot.config.min_interval);
-      if (!duration) return '按最小间隔判断';
+      if (!duration) return '可立即发送';
       const next = new Date(new Date(authState.last_success_at).getTime() + duration);
-      if (Number.isNaN(next.getTime())) return '按最小间隔判断';
-      if (Date.now() >= next.getTime()) return '现在可发送';
-      return next.toLocaleString('zh-CN', { hour12: false }) + ' 后';
+      if (Number.isNaN(next.getTime())) return '可立即发送';
+      if (Date.now() >= next.getTime()) return '可立卣发送';
+      return '冷却至 ' + next.toLocaleString('zh-CN', { hour12: false });
     }
 
     function uniqueSorted(values) {
@@ -913,7 +913,15 @@ func (a *app) renderStatusPage() []byte {
         }
         tr.appendChild(statusTd);
         tr.appendChild(createCell(formatTime(itemState.last_success_at)));
-        tr.appendChild(createCell(attemptText(itemState.last_attempt) + '\n' + nextAllowedText(itemState)));
+        const attemptTd = document.createElement('td');
+        const attemptLine = document.createElement('div');
+        attemptLine.textContent = attemptText(itemState.last_attempt);
+        attemptTd.appendChild(attemptLine);
+        const nextLine = document.createElement('div');
+        nextLine.className = 'cwp-muted';
+        nextLine.textContent = nextAllowedText(itemState);
+        attemptTd.appendChild(nextLine);
+        tr.appendChild(attemptTd);
 
         const actionTd = document.createElement('td');
         const run = document.createElement('button');
