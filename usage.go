@@ -103,10 +103,13 @@ func extractAccessToken(doc map[string]any) string {
 }
 
 // fetchCodexUsage 拉取 Codex 额度。
-func fetchCodexUsage(authID, email, plan string) usageEntry {
-	entry := usageEntry{AuthID: authID, Provider: "codex", Email: email, Plan: plan}
-	entry.Weight = codexPlanWeight(plan)
-	token, err := accessTokenForAuth(authID)
+func fetchCodexUsage(authID, authIndex, email string) usageEntry {
+	entry := usageEntry{AuthID: authID, Provider: "codex", Email: email}
+	entry.Weight = codexPlanWeight("")
+	if strings.TrimSpace(authIndex) == "" {
+		authIndex = authID
+	}
+	token, err := accessTokenForAuth(authIndex)
 	if err != nil {
 		entry.Err = err.Error()
 		return entry
@@ -161,10 +164,13 @@ func (w codexWindowJSON) toWindow() usageWindow {
 }
 
 // fetchClaudeUsage 先调 profile 拿套餐，再调 usage 拿 5 小时/周/Sonnet 额度。
-func fetchClaudeUsage(authID, email, plan string) usageEntry {
-	entry := usageEntry{AuthID: authID, Provider: "claude", Email: email, Plan: plan}
-	entry.Weight = claudePlanWeight(plan)
-	token, err := accessTokenForAuth(authID)
+func fetchClaudeUsage(authID, authIndex, email string) usageEntry {
+	entry := usageEntry{AuthID: authID, Provider: "claude", Email: email}
+	entry.Weight = claudePlanWeight("")
+	if strings.TrimSpace(authIndex) == "" {
+		authIndex = authID
+	}
+	token, err := accessTokenForAuth(authIndex)
 	if err != nil {
 		entry.Err = err.Error()
 		return entry

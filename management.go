@@ -357,8 +357,8 @@ func (a *app) renderStatusPage() []byte {
     .cwp-wide-field { grid-column: 1 / -1; }
     .cwp-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
     .cwp-actions button { width: auto; }
-    .cwp-inline { display: flex; gap: 8px; align-items: center; }
-    .cwp-inline input[type="checkbox"] { flex: 0 0 auto; margin: 0; }
+    .cwp-page label.cwp-inline { display: flex; gap: 8px; align-items: center; }
+    .cwp-page .cwp-inline input[type="checkbox"] { flex: 0 0 auto; width: auto; margin: 0; }
     .cwp-muted { color: color-mix(in srgb, CanvasText 62%, Canvas 38%); font-size: 12px; font-weight: 520; line-height: 1.45; }
     .cwp-summary { display: grid; gap: 8px; }
     .cwp-summary-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
