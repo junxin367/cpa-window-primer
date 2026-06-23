@@ -1,0 +1,19 @@
+registry.json
+  s_7af7390ce4d120::t_e1f3782d682220 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "8001de6f5bf7c88e4e47a454aaa49b9efb89141e",
+  "prompts": {},
+  "sessions": {
+    "s_7af7390ce4d120": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eedb2-12ef-7b70-a87b-915ea4928836",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "刘俊鑫 <673638712@qq.com>"
+    }
+  }
+}
