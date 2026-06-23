@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+var usageDisplayLocation = func() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.FixedZone("Asia/Shanghai", 8*3600)
+	}
+	return loc
+}()
+
 // collectUsage 拉取所有已选认证文件的额度，按 provider 分组返回。
 func (a *app) collectUsage() []usageEntry {
 	cfg, _, _ := a.snapshot()
@@ -145,7 +153,7 @@ func filterProvider(entries []usageEntry, provider string) []usageEntry {
 func buildUsageMessage(entries []usageEntry) string {
 	var b strings.Builder
 	b.WriteString("# 额度汇总\n")
-	b.WriteString("> 更新时间：<font color=\"comment\">" + time.Now().Format("2006-01-02 15:04") + "</font>\n")
+	b.WriteString("> 更新时间：<font color=\"comment\">" + displayTime(time.Now(), "2006-01-02 15:04") + "</font>\n")
 
 	codex := filterProvider(entries, "codex")
 	if len(codex) > 0 {
@@ -275,7 +283,14 @@ func resetText(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format("01/02 15:04")
+	return displayTime(t, "01/02 15:04")
+}
+
+func displayTime(t time.Time, layout string) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.In(usageDisplayLocation).Format(layout)
 }
 
 // pushUsage 采集额度并推送到 webhook。
@@ -369,7 +384,7 @@ type usageGroupView struct {
 func (a *app) usageSnapshot() usageSnapshotView {
 	entries := a.collectUsage()
 	view := usageSnapshotView{
-		GeneratedAt: time.Now().Format("2006-01-02 15:04"),
+		GeneratedAt: displayTime(time.Now(), "2006-01-02 15:04"),
 		Message:     buildUsageMessage(entries),
 	}
 	if codex := filterProvider(entries, "codex"); len(codex) > 0 {

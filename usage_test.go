@@ -102,3 +102,10 @@ func TestAggregateCodexGroupTreatsWeeklyExhaustedAsNoPrimaryQuota(t *testing.T) 
 		t.Fatalf("PrimaryReset = %s, want %s", got.PrimaryReset, proReset)
 	}
 }
+
+func TestResetTextUsesShanghaiTime(t *testing.T) {
+	utcReset := time.Date(2026, 6, 30, 2, 0, 0, 0, time.UTC)
+	if got := resetText(utcReset); got != "06/30 10:00" {
+		t.Fatalf("resetText() = %q, want %q", got, "06/30 10:00")
+	}
+}
