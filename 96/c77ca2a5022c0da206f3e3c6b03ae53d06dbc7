@@ -1,0 +1,31 @@
+management.go
+  s_7af7390ce4d120::t_77966cb71e5add 392-413,416-431
+  s_7af7390ce4d120::t_3c2340ed328d73 895
+  s_7af7390ce4d120::t_65774c9765e6c0 347
+  s_7af7390ce4d120::t_05296eb57513c0 708
+  s_7af7390ce4d120::t_33856d50edebae 985-989
+  s_7af7390ce4d120::t_5ef5c10137e9d4 220-222
+  s_7af7390ce4d120::t_e88363ef3e9250 701-707,709-721,723,725
+  s_7af7390ce4d120::t_cda1d2c88d1bf2 722,724
+  s_7af7390ce4d120::t_d316a6010ae51a 598-634,636,640
+  s_7af7390ce4d120::t_b8292449c1865f 919
+  s_7af7390ce4d120::t_e5d2d3bba02a1e 897-899,902
+registry.json
+  s_7af7390ce4d120::t_1b9d2ebf155ec8 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "96c77ca2a5022c0da206f3e3c6b03ae53d06dbc7",
+  "prompts": {},
+  "sessions": {
+    "s_7af7390ce4d120": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eedb2-12ef-7b70-a87b-915ea4928836",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "刘俊鑫 <673638712@qq.com>"
+    }
+  }
+}
