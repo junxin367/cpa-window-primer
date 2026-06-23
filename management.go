@@ -1067,8 +1067,8 @@ func (a *app) renderStatusPage() []byte {
       k.className = 'cwp-muted';
       k.textContent = label;
       const v = document.createElement('strong');
-      const pct = Math.round(Number(percent) || 0);
-      v.textContent = pct + '%' + (reset ? '   ' + reset : '');
+      const remain = Math.round(100 - (Number(percent) || 0));
+      v.textContent = '剩余 ' + remain + '%' + (reset ? '   ' + reset : '');
       row.appendChild(k); row.appendChild(v);
       return row;
     }

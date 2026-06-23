@@ -148,13 +148,13 @@ func buildUsageMessage(entries []usageEntry) string {
 
 	codex := filterProvider(entries, "codex")
 	if len(codex) > 0 {
-		b.WriteString("\n**🤖 GPT**\n")
+		b.WriteString("\n**GPT**\n")
 		writeGroup(&b, aggregateGroup(codex, false), nil)
 	}
 
 	claude := filterProvider(entries, "claude")
 	if len(claude) > 0 {
-		b.WriteString("\n**🧠 CLAUDE**\n")
+		b.WriteString("\n**CLAUDE**\n")
 		sonnet := aggregateGroup(claude, true)
 		var extra []usageLineItem
 		if sonnet.HasData {
@@ -205,20 +205,40 @@ func writeGroup(b *strings.Builder, agg aggregateResult, extra []usageLineItem) 
 
 // writeUsageLine 输出一行：名称 + 进度条 + 着色百分比 + 刷新时间。
 func writeUsageLine(b *strings.Builder, label string, percent float64, reset time.Time) {
-	color := usageColor(percent)
-	line := fmt.Sprintf("> %s `%s` <font color=\"%s\">%s</font>", label, usageBar(percent), color, percentText(percent))
+	// 入参 percent 为“已用”百分比，展示改为“剩余”。
+	remain := 100 - percent
+	color := remainColor(remain)
+	// “对齐后的标签 + 进度条”放进反引号等宽区保证列对齐；
+	// 进度条固定 10 格，所以百分比起点也对齐，放在外部以保留颜色。
+	line := fmt.Sprintf("> `%s %s` <font color=\"%s\">%s</font>", padLabel(label, 12), usageBar(remain), color, percentText(remain))
 	if r := resetText(reset); r != "" {
-		line += "  <font color=\"comment\">" + r + " 重置</font>"
+		line += " <font color=\"comment\">" + r + " 重置</font>"
 	}
 	b.WriteString(line + "\n")
 }
 
-// usageColor 按使用率选颜色：低=绿、中=橙、高=红。
-func usageColor(percent float64) string {
+// padLabel 按显示宽度（中文计2、ASCII 计1）右侧补空格至目标宽度。
+func padLabel(label string, width int) string {
+	cur := 0
+	for _, r := range label {
+		if r > 0x7f {
+			cur += 2
+		} else {
+			cur++
+		}
+	}
+	if cur >= width {
+		return label
+	}
+	return label + strings.Repeat(" ", width-cur)
+}
+
+// remainColor 按剩余量选颜色：剩余多=绿、中=橙、剩余少=红。
+func remainColor(remain float64) string {
 	switch {
-	case percent >= 90:
+	case remain <= 10:
 		return "warning"
-	case percent >= 60:
+	case remain <= 40:
 		return "comment"
 	default:
 		return "info"
