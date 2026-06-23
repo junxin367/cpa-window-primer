@@ -1,0 +1,21 @@
+registry.json
+  s_7af7390ce4d120::t_af053f09c6095a 9
+usage_report.go
+  s_7af7390ce4d120::t_f5b407f56405cb 146-147,151-152,157,159,161,163,179,187-194,196,199-240
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "3bfc866e7cc2a2e2a527ea64923b5bf5c247fa8b",
+  "prompts": {},
+  "sessions": {
+    "s_7af7390ce4d120": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eedb2-12ef-7b70-a87b-915ea4928836",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "刘俊鑫 <673638712@qq.com>"
+    }
+  }
+}
