@@ -143,24 +143,24 @@ func filterProvider(entries []usageEntry, provider string) []usageEntry {
 // buildUsageMessage 生成企微 markdown 文本。
 func buildUsageMessage(entries []usageEntry) string {
 	var b strings.Builder
-	b.WriteString("**额度汇总**\n")
-	b.WriteString("> 时间：" + time.Now().Format("2006-01-02 15:04") + "\n")
+	b.WriteString("# 额度汇总\n")
+	b.WriteString("> 更新时间：<font color=\"comment\">" + time.Now().Format("2006-01-02 15:04") + "</font>\n")
 
 	codex := filterProvider(entries, "codex")
 	if len(codex) > 0 {
-		b.WriteString("\n**GPT：**\n")
-		writeGroup(&b, aggregateGroup(codex, false))
+		b.WriteString("\n**🤖 GPT**\n")
+		writeGroup(&b, aggregateGroup(codex, false), nil)
 	}
 
 	claude := filterProvider(entries, "claude")
 	if len(claude) > 0 {
-		b.WriteString("\n**CLAUDE：**\n")
-		writeGroup(&b, aggregateGroup(claude, false))
+		b.WriteString("\n**🧠 CLAUDE**\n")
 		sonnet := aggregateGroup(claude, true)
+		var extra []usageLineItem
 		if sonnet.HasData {
-			b.WriteString(fmt.Sprintf("Sonnet限额：%s   %s\n",
-				percentText(sonnet.SecondaryPercent), resetText(sonnet.SecondaryReset)))
+			extra = append(extra, usageLineItem{"Sonnet周限额", sonnet.SecondaryPercent, sonnet.SecondaryReset})
 		}
+		writeGroup(&b, aggregateGroup(claude, false), extra)
 	}
 
 	// 错误提示。
@@ -176,7 +176,7 @@ func buildUsageMessage(entries []usageEntry) string {
 	}
 	if len(errs) > 0 {
 		sort.Strings(errs)
-		b.WriteString("\n> 部分认证文件读取失败：\n")
+		b.WriteString("\n> <font color=\"warning\">部分认证文件读取失败</font>\n")
 		for _, e := range errs {
 			b.WriteString("> " + e + "\n")
 		}
@@ -184,13 +184,60 @@ func buildUsageMessage(entries []usageEntry) string {
 	return b.String()
 }
 
-func writeGroup(b *strings.Builder, agg aggregateResult) {
+// usageLineItem 是一行额度明细。
+type usageLineItem struct {
+	Label   string
+	Percent float64
+	Reset   time.Time
+}
+
+func writeGroup(b *strings.Builder, agg aggregateResult, extra []usageLineItem) {
 	if !agg.HasData {
-		b.WriteString("（暂无额度数据）\n")
+		b.WriteString("> <font color=\"comment\">暂无额度数据</font>\n")
 		return
 	}
-	b.WriteString(fmt.Sprintf(" 5小时限额：%s   %s\n", percentText(agg.PrimaryPercent), resetText(agg.PrimaryReset)))
-	b.WriteString(fmt.Sprintf(" 周限额：%s   %s\n", percentText(agg.SecondaryPercent), resetText(agg.SecondaryReset)))
+	writeUsageLine(b, "5小时限额", agg.PrimaryPercent, agg.PrimaryReset)
+	writeUsageLine(b, "周限额", agg.SecondaryPercent, agg.SecondaryReset)
+	for _, item := range extra {
+		writeUsageLine(b, item.Label, item.Percent, item.Reset)
+	}
+}
+
+// writeUsageLine 输出一行：名称 + 进度条 + 着色百分比 + 刷新时间。
+func writeUsageLine(b *strings.Builder, label string, percent float64, reset time.Time) {
+	color := usageColor(percent)
+	line := fmt.Sprintf("> %s `%s` <font color=\"%s\">%s</font>", label, usageBar(percent), color, percentText(percent))
+	if r := resetText(reset); r != "" {
+		line += "  <font color=\"comment\">" + r + " 重置</font>"
+	}
+	b.WriteString(line + "\n")
+}
+
+// usageColor 按使用率选颜色：低=绿、中=橙、高=红。
+func usageColor(percent float64) string {
+	switch {
+	case percent >= 90:
+		return "warning"
+	case percent >= 60:
+		return "comment"
+	default:
+		return "info"
+	}
+}
+
+// usageBar 生成 10 格进度条。
+func usageBar(percent float64) string {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	filled := int(math.Round(percent / 10))
+	if filled > 10 {
+		filled = 10
+	}
+	return strings.Repeat("█", filled) + strings.Repeat("░", 10-filled)
 }
 
 func percentText(used float64) string {
