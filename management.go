@@ -291,7 +291,7 @@ func (a *app) renderStatusPage() []byte {
     }
     .cwp-body { margin: 0; background: #ffffff; color: #111827; }
     .cwp-page, .cwp-page * { box-sizing: border-box; }
-    .cwp-page { max-width: 1180px; margin: 0 auto; padding: 24px; }
+    .cwp-page { max-width: 1280px; margin: 0 auto; padding: 24px; }
     .cwp-header { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
     .cwp-page h1 { margin: 0; font-size: 24px; font-weight: 760; letter-spacing: 0; }
     .cwp-page h2 { margin: 0 0 14px; font-size: 15px; font-weight: 720; letter-spacing: 0; }
@@ -389,7 +389,7 @@ func (a *app) renderStatusPage() []byte {
     }
     .cwp-badge.cwp-ok { background: color-mix(in srgb, #16a34a 14%, Canvas 86%); color: color-mix(in srgb, #15803d 78%, CanvasText 22%); }
     .cwp-badge.cwp-warn { background: color-mix(in srgb, #d97706 14%, Canvas 86%); color: color-mix(in srgb, #b45309 78%, CanvasText 22%); }
-    .cwp-status-cell { max-width: 220px; }
+    .cwp-status-cell { max-width: 220px; min-width: 100px; }
     .cwp-status-cell .cwp-muted { overflow-wrap: anywhere; word-break: break-word; }
     .cwp-toast-host {
       position: fixed;
