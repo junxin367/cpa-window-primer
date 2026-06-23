@@ -1,0 +1,21 @@
+usage_test.go
+  s_7af7390ce4d120::t_a11d4ddc9ee6d2 1-63
+registry.json
+  s_7af7390ce4d120::t_c1b9c1423f52d1 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "cb7da6273ed01755ddbaf0ae8bfc6a426a33b46d",
+  "prompts": {},
+  "sessions": {
+    "s_7af7390ce4d120": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eedb2-12ef-7b70-a87b-915ea4928836",
+        "model": "gpt-5.5"
+      },
+      "human_author": "刘俊鑫 <673638712@qq.com>"
+    }
+  }
+}
