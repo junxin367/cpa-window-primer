@@ -42,7 +42,6 @@ func (a *app) collectUsage() []usageEntry {
 		provider := classifyProvider(auth.Provider, auth.Type)
 		switch provider {
 		case "codex":
-		case "claude":
 			out = append(out, fetchCodexUsage(id, strings.TrimSpace(auth.AuthIndex), auth.Email))
 		case "claude":
 			out = append(out, fetchClaudeUsage(id, strings.TrimSpace(auth.AuthIndex), auth.Email))
