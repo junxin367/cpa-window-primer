@@ -1,0 +1,40 @@
+usage_report.go
+  s_7af7390ce4d120::t_3752005ee560df 214-241
+  s_7af7390ce4d120::t_0d6c4033c963b7 282-338
+  s_7af7390ce4d120::t_20419e15b1ea0e 1-213,242-281
+management.go
+  s_7af7390ce4d120::t_66946fa81c1f2d 833-835,894-897,1137,1139-1141
+  s_7af7390ce4d120::t_0360d9646cb3e7 839-847,849-851,855-856,861-862,867,877-878
+  s_7af7390ce4d120::t_813e8d73771a5c 598-601
+  s_7af7390ce4d120::t_25ff7843d6157b 879,1022-1088
+  s_7af7390ce4d120::t_efcb062e343ce5 579-581
+  s_7af7390ce4d120::t_e4e2c9cbb90f47 543-567
+  s_7af7390ce4d120::t_fbd964dd5987c3 80-81,122-128
+usage.go
+  s_7af7390ce4d120::t_871ec7d46d0990 1-251
+registry.json
+  s_7af7390ce4d120::t_e8f36034eeb417 9
+runtime.go
+  s_7af7390ce4d120::t_4d9a689d3c0c8e 23-24
+constants.go
+  s_7af7390ce4d120::t_fcd2cd0186f576 6,17-33,37,42
+  s_7af7390ce4d120::t_6f68967e5df940 34
+config.go
+  s_7af7390ce4d120::t_cb2089b8c0a8f2 26-29,43-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.9",
+  "base_commit_sha": "2a57d1aaf119aa56d0401a7e0206ce3498e83ef5",
+  "prompts": {},
+  "sessions": {
+    "s_7af7390ce4d120": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eedb2-12ef-7b70-a87b-915ea4928836",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "刘俊鑫 <673638712@qq.com>"
+    }
+  }
+}
