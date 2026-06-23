@@ -217,7 +217,9 @@ func (a *app) managementSnapshot() managementSnapshot {
 			Email:             auth.Email,
 			Label:             auth.Label,
 			Source:            auth.Source,
-			Selectable:        !auth.Disabled && !hostBlocked && !quotaBlocked,
+			// 仅“手动禁用”的认证文件不可勾选；无额度/限流只会让后台定时任务跳过，
+			// 不影响在管理页继续勾选、保存与手动预热。
+			Selectable:        !auth.Disabled,
 			Unavailable:       auth.Unavailable,
 			Disabled:          auth.Disabled,
 			NextRetryAfter:    nextRetryAfter,
@@ -342,7 +344,7 @@ func (a *app) renderStatusPage() []byte {
       min-width: 0;
     }
     .cwp-fields { display: grid; gap: 13px; }
-    .cwp-settings-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; align-items: start; }
+    .cwp-settings-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; align-items: start; }
     .cwp-wide-field { grid-column: 1 / -1; }
     .cwp-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
     .cwp-actions button { width: auto; }
@@ -387,21 +389,46 @@ func (a *app) renderStatusPage() []byte {
     }
     .cwp-badge.cwp-ok { background: color-mix(in srgb, #16a34a 14%, Canvas 86%); color: color-mix(in srgb, #15803d 78%, CanvasText 22%); }
     .cwp-badge.cwp-warn { background: color-mix(in srgb, #d97706 14%, Canvas 86%); color: color-mix(in srgb, #b45309 78%, CanvasText 22%); }
-    .cwp-inline-status {
+    .cwp-status-cell { max-width: 220px; }
+    .cwp-status-cell .cwp-muted { overflow-wrap: anywhere; word-break: break-word; }
+    .cwp-toast-host {
+      position: fixed;
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 2147483000;
+      pointer-events: none;
+      width: min(440px, calc(100vw - 32px));
+    }
+    .cwp-toast {
+      pointer-events: auto;
+      cursor: pointer;
+      border-radius: 10px;
+      padding: 11px 14px;
+      font-size: 13px;
+      font-weight: 650;
+      line-height: 1.45;
       white-space: pre-wrap;
       word-break: break-word;
-      border-radius: 6px;
-      padding: 9px 10px;
-      background: color-mix(in srgb, #2563eb 10%, Canvas 90%);
-      border: 1px solid color-mix(in srgb, #2563eb 18%, Canvas 82%);
-      font-size: 12px;
-      font-weight: 650;
-      line-height: 1.4;
+      color: #fff;
+      background: #1f2937;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.22);
+      opacity: 0;
+      transform: translateY(-14px) scale(0.98);
+      transition: opacity .26s ease, transform .26s ease;
     }
-    .cwp-inline-status.cwp-error {
-      background: color-mix(in srgb, #dc2626 10%, Canvas 90%);
-      border-color: color-mix(in srgb, #dc2626 22%, Canvas 78%);
-      color: color-mix(in srgb, #b91c1c 82%, CanvasText 18%);
+    .cwp-toast-success { background: #0f766e; }
+    .cwp-toast-error { background: #b91c1c; }
+    .cwp-toast-info { background: #1f2937; }
+    .cwp-toast-show { opacity: 1; transform: translateY(0) scale(1); }
+    .cwp-toast-hide { opacity: 0; transform: translateY(-14px) scale(0.98); }
+    @media (prefers-reduced-motion: reduce) {
+      .cwp-toast { transition: opacity .12s ease; transform: none; }
+      .cwp-toast-show { transform: none; }
+      .cwp-toast-hide { transform: none; }
     }
     @media (max-width: 920px) {
       .cwp-page { padding: 16px; }
@@ -498,7 +525,6 @@ func (a *app) renderStatusPage() []byte {
               <button id="saveConfig" type="button">保存配置</button>
               <button id="refreshSnapshot" type="button" class="cwp-secondary">刷新状态</button>
             </div>
-            <div id="connectionStatus" class="cwp-inline-status" hidden></div>
           </div>
         </section>
         <section class="cwp-panel">
@@ -569,18 +595,49 @@ func (a *app) renderStatusPage() []byte {
       }
     }
 
+    let toastSeq = 0;
+
+    function toastHost() {
+      let host = document.getElementById('cwpToastHost');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = 'cwpToastHost';
+        host.className = 'cwp-toast-host';
+        document.body.appendChild(host);
+      }
+      return host;
+    }
+
+    function showToast(message, type) {
+      const text = String(message == null ? '' : message).trim();
+      if (!text) return;
+      const host = toastHost();
+      const toast = document.createElement('div');
+      toast.className = 'cwp-toast cwp-toast-' + (type || 'info');
+      toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+      toast.textContent = text;
+      host.appendChild(toast);
+      requestAnimationFrame(() => toast.classList.add('cwp-toast-show'));
+      const id = ++toastSeq;
+      const ttl = type === 'error' ? 6000 : 3200;
+      const dismiss = () => {
+        if (toast.dataset.closing === String(id)) return;
+        toast.dataset.closing = String(id);
+        toast.classList.remove('cwp-toast-show');
+        toast.classList.add('cwp-toast-hide');
+        toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+        setTimeout(() => toast.remove(), 400);
+      };
+      toast.addEventListener('click', dismiss);
+      setTimeout(dismiss, ttl);
+    }
+
     function setStatus(message, error) {
-      const box = field('connectionStatus');
-      box.hidden = false;
-      box.textContent = message;
-      box.className = 'cwp-inline-status' + (error ? ' cwp-error' : '');
+      showToast(message, error ? 'error' : 'success');
     }
 
     function clearStatus() {
-      const box = field('connectionStatus');
-      box.hidden = true;
-      box.textContent = '';
-      box.className = 'cwp-inline-status';
+      // toast 会自动消失，无需手动清除。
     }
 
     function setConnectionStatus(message) {
@@ -641,7 +698,31 @@ func (a *app) renderStatusPage() []byte {
     function attemptText(record) {
       if (!record) return '无';
       if (record.success) return '成功 ' + formatTime(record.at);
-      return '失败 ' + formatTime(record.at) + (record.error ? '：' + record.error : '');
+      return '未生效 ' + formatTime(record.at) + (record.error ? '：' + humanizeError(record.error) : '');
+    }
+
+    function humanizeError(raw) {
+      const text = String(raw || '').trim();
+      if (!text) return '';
+      const lower = text.toLowerCase();
+      if (lower.includes('quota') || lower.includes('rate_limit') || lower.includes('rate limit') || lower.includes('usage') || lower.includes('exhausted') || lower.includes('credit') || lower.includes('too many requests') || lower.includes('429') || lower.includes('payment') || text.includes('额度') || text.includes('限流')) {
+        return '额度已满';
+      }
+      if (lower.includes('min_interval_not_met')) return '未到最小间隔';
+      if (lower.includes('warmup_already_running')) return '正在预热';
+      if (lower.includes('need') && lower.includes('密钥')) return text;
+      if (text.length > 48) return text.slice(0, 48) + '…';
+      return text;
+    }
+
+    function statusLabel(auth) {
+      const raw = String(auth && auth.status || '').trim();
+      const lower = raw.toLowerCase();
+      if (lower === 'active' || lower === 'ok' || lower === 'normal') return '正常';
+      // 优先用后端给出的阻塞原因（已是中文），额度类会被归一为“额度已满”。
+      if (auth && auth.blocked_reason) return humanizeError(auth.blocked_reason);
+      if (lower === 'error' || lower === 'blocked' || lower === 'unavailable') return '不可用';
+      return raw || '未知';
     }
 
     function nextAllowedText(authState) {
@@ -811,14 +892,14 @@ func (a *app) renderStatusPage() []byte {
 
         tr.appendChild(createCell(auth.email || auth.label || '无'));
         const statusTd = document.createElement('td');
+        statusTd.className = 'cwp-status-cell';
         const badge = document.createElement('span');
-        badge.className = 'cwp-badge ' + (selectable && String(auth.status).toLowerCase() === 'active' ? 'cwp-ok' : 'cwp-warn');
-        badge.textContent = auth.status || '未知';
+        const isActive = String(auth.status || '').toLowerCase() === 'active';
+        badge.className = 'cwp-badge ' + (isActive ? 'cwp-ok' : 'cwp-warn');
+        badge.textContent = statusLabel(auth);
         statusTd.appendChild(badge);
         const details = [];
-        if (auth.blocked_reason) details.push('不可选：' + auth.blocked_reason);
-        if (auth.next_retry_after) details.push('重试时间：' + formatTime(auth.next_retry_after));
-        if (auth.status_message && auth.status_message !== auth.blocked_reason) details.push(auth.status_message);
+        if (!isActive && auth.blocked_reason) details.push(humanizeError(auth.blocked_reason));
         if (details.length) {
           const detail = document.createElement('div');
           detail.className = 'cwp-muted';
@@ -835,7 +916,7 @@ func (a *app) renderStatusPage() []byte {
         run.className = 'cwp-secondary';
         run.textContent = '立即预热';
         run.disabled = !selectable;
-        run.addEventListener('click', () => runWarmup(auth.id, false));
+        run.addEventListener('click', () => runWarmup(auth.id, true));
         actionTd.appendChild(run);
         tr.appendChild(actionTd);
         body.appendChild(tr);
@@ -901,7 +982,11 @@ func (a *app) renderStatusPage() []byte {
         const data = await readJSON(response);
         if (!response.ok) throw new Error(formatError(data, '手动预热失败'));
         await refreshSnapshot(false);
-        setStatus('手动预热完成：\n' + JSON.stringify(data, null, 2));
+        if (data && data.success === false) {
+          setStatus('预热未生效：' + humanizeError(data.error || ''), true);
+        } else {
+          setStatus('手动预热完成。');
+        }
       } catch (error) {
         if (error.connectionStatus) return;
         setStatus(error.message || String(error), true);
