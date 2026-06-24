@@ -10,6 +10,10 @@ func TestNormalizeConfigDefaults(t *testing.T) {
 	if cfg.Model != defaultModel || cfg.Prompt != defaultPrompt {
 		t.Fatalf("defaults = model %q prompt %q", cfg.Model, cfg.Prompt)
 	}
+	models := parseModelList(cfg.Model)
+	if len(models) != 2 || models[0] != "gpt-5.4" || models[1] != "claude-sonnet-4-6" {
+		t.Fatalf("default model list = %#v, want gpt and claude defaults", models)
+	}
 	if got := cfg.Times; len(got) != 3 || got[0] != "07:00" || got[1] != "12:00" || got[2] != "17:00" {
 		t.Fatalf("Times = %#v, want defaults", got)
 	}

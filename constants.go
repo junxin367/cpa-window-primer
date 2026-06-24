@@ -3,11 +3,11 @@ package main
 const (
 	pluginID           = "cpa-window-primer"
 	pluginName         = "CPA Window Primer"
-	pluginVersion      = "0.2.8"
+	pluginVersion      = "0.2.9"
 	pluginAuthor       = "junxin367"
 	pluginRepository   = "https://github.com/junxin367/cpa-window-primer"
 	primerHeader       = "X-CPA-Window-Primer-Auth-ID"
-	defaultModel       = "gpt-5.4"
+	defaultModel       = "gpt-5.4, claude-sonnet-4-6"
 	defaultPrompt      = "hi"
 	defaultMinInterval = "5h"
 	defaultTick        = "5s"

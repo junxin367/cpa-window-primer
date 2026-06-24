@@ -280,7 +280,7 @@ func authBlockedReason(auth pluginapi.HostAuthFileEntry, hostBlocked, quotaBlock
 func (a *app) renderStatusPage() []byte {
 	rawData, err := json.Marshal(a.managementSnapshot())
 	if err != nil {
-		rawData = []byte(`{"config":{"enabled":true,"auth_ids":[],"times":["07:00","12:00","17:00"],"model":"gpt-5.4","prompt":"hi","min_interval":"5h","lead_time":"1m","tick_interval":"5s"},"auths":[],"state":{"auths":{}}}`)
+		rawData = []byte(`{"config":{"enabled":true,"auth_ids":[],"times":["07:00","12:00","17:00"],"model":"gpt-5.4, claude-sonnet-4-6","prompt":"hi","min_interval":"5h","lead_time":"1m","tick_interval":"5s"},"auths":[],"state":{"auths":{}}}`)
 	}
 	var out bytes.Buffer
 	out.WriteString(`<!doctype html>
@@ -481,7 +481,8 @@ func (a *app) renderStatusPage() []byte {
             </div>
             <div class="cwp-settings-grid">
               <label><span>模型</span>
-                <input id="model" spellcheck="false" placeholder="gpt-5.4">
+                <textarea id="model" spellcheck="false" placeholder="gpt-5.4, claude-sonnet-4-6"></textarea>
+                <span class="cwp-muted">可填多个模型，支持逗号、中文逗号、顿号、分号或换行分隔。</span>
               </label>
               <label><span>最小间隔</span>
                 <input id="minInterval" spellcheck="false" placeholder="5h">
@@ -573,6 +574,7 @@ func (a *app) renderStatusPage() []byte {
 	out.Write(rawData)
 	out.WriteString(`;
     const DEFAULT_TIMES = ['07:00', '12:00', '17:00'];
+    const DEFAULT_MODEL = 'gpt-5.4, claude-sonnet-4-6';
     const ENDPOINTS = {
       snapshot: '/v0/management/cpa-window-primer/snapshot',
       config: '/v0/management/cpa-window-primer/config',
@@ -591,7 +593,7 @@ func (a *app) renderStatusPage() []byte {
           enabled: config.enabled !== false,
           auth_ids: Array.isArray(config.auth_ids) ? config.auth_ids : [],
           times: Array.isArray(config.times) && config.times.length ? config.times : DEFAULT_TIMES.slice(),
-          model: config.model || 'gpt-5.4',
+          model: config.model || DEFAULT_MODEL,
           prompt: config.prompt || 'hi',
           min_interval: config.min_interval || '5h',
           lead_time: config.lead_time || '1m',
@@ -800,7 +802,7 @@ func (a *app) renderStatusPage() []byte {
         ['可管理认证文件', state.snapshot.auths.length + ' 个'],
         ['已选择认证文件', selectedCount + ' 个'],
         ['发送窗口', (config.times || []).join(' / ') || '未配置'],
-        ['模型', config.model || 'gpt-5.4'],
+        ['预热模型', config.model || DEFAULT_MODEL],
         ['最小间隔', config.min_interval || '5h']
       ];
       if (state.snapshot.last_error) {
@@ -824,7 +826,7 @@ func (a *app) renderStatusPage() []byte {
     function renderForm() {
       const config = state.snapshot.config;
       field('enabled').checked = config.enabled !== false;
-      field('model').value = config.model || 'gpt-5.4';
+      field('model').value = config.model || DEFAULT_MODEL;
       field('prompt').value = config.prompt || 'hi';
       field('minInterval').value = config.min_interval || '5h';
       field('leadTime').value = config.lead_time || '1m';
@@ -887,7 +889,7 @@ func (a *app) renderStatusPage() []byte {
         enabled: field('enabled').checked,
         auth_ids: collectAuthIDs(),
         times: collectTimes(),
-        model: field('model').value.trim() || 'gpt-5.4',
+        model: field('model').value.trim() || DEFAULT_MODEL,
         prompt: field('prompt').value.trim() || 'hi',
         min_interval: field('minInterval').value.trim() || '5h',
         lead_time: field('leadTime').value.trim() || '1m',

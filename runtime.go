@@ -264,20 +264,48 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 	}
 	defer a.clearActiveWarmup(authID)
 
-	resp, err := executeHostWarmup(authID, cfg.Model, cfg.Prompt, hostCallbackID)
-	record := attemptRecord{
-		At:        now,
-		WindowKey: windowKey,
-		Model:     cfg.Model,
+	models := warmupModelCandidates(cfg, authID)
+	if len(models) == 0 {
+		models = []string{defaultFirstModel()}
 	}
-	if err != nil {
-		record.Error = err.Error()
-	} else {
-		record.StatusCode = resp.StatusCode
-		record.ResponseSummary = summarizeResponse(resp.Body)
-		record.Success = resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
-		if !record.Success {
-			record.Error = fmt.Sprintf("status %d", resp.StatusCode)
+	var (
+		resp       pluginapi.HostModelExecutionResponse
+		err        error
+		record     attemptRecord
+		fallbacks  []string
+	)
+	for idx, model := range models {
+		resp, err = executeHostWarmup(authID, model, cfg.Prompt, hostCallbackID)
+		record = attemptRecord{
+			At:        now,
+			WindowKey: windowKey,
+			Model:     model,
+		}
+		if err != nil {
+			record.Error = err.Error()
+		} else {
+			record.StatusCode = resp.StatusCode
+			record.ResponseSummary = summarizeResponse(resp.Body)
+			record.Success = resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
+			if !record.Success {
+				record.Error = fmt.Sprintf("status %d", resp.StatusCode)
+			}
+		}
+		if record.Success {
+			break
+		}
+		quotaBlocked := isWarmupQuotaBlocked(record.StatusCode, resp.Headers, resp.Body, err)
+		modelUnavailable := isWarmupModelUnavailable(record.StatusCode, resp.Body, err)
+		if quotaBlocked || !modelUnavailable || idx == len(models)-1 {
+			break
+		}
+		fallbacks = append(fallbacks, fmt.Sprintf("%s: %s", model, warmupErrorText(record)))
+	}
+	if len(fallbacks) > 0 && !record.Success {
+		if strings.TrimSpace(record.Error) == "" {
+			record.Error = "模型兜底记录: " + strings.Join(fallbacks, " | ")
+		} else {
+			record.Error = strings.TrimSpace(record.Error) + "; 模型兜底记录: " + strings.Join(fallbacks, " | ")
 		}
 	}
 	quotaBlocked := !record.Success && isWarmupQuotaBlocked(record.StatusCode, resp.Headers, resp.Body, err)
@@ -296,6 +324,19 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 	}
 	a.mu.Unlock()
 	return record
+}
+
+func warmupErrorText(record attemptRecord) string {
+	if strings.TrimSpace(record.Error) != "" {
+		return strings.TrimSpace(record.Error)
+	}
+	if strings.TrimSpace(record.ResponseSummary) != "" {
+		return strings.TrimSpace(record.ResponseSummary)
+	}
+	if record.StatusCode != 0 {
+		return fmt.Sprintf("status %d", record.StatusCode)
+	}
+	return "failed"
 }
 
 func (a *app) claimActiveWarmup(authID string) bool {
