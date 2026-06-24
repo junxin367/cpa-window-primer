@@ -316,7 +316,7 @@ func (a *app) renderStatusPage() []byte {
       color: CanvasText;
     }
     .cwp-page input[type="checkbox"] { width: auto; }
-    .cwp-page textarea { min-height: 92px; resize: vertical; line-height: 1.45; }
+    .cwp-page textarea { min-height: 46px; resize: vertical; line-height: 1.45; }
     .cwp-page button {
       border: 0;
       border-radius: 6px;
@@ -354,6 +354,7 @@ func (a *app) renderStatusPage() []byte {
     }
     .cwp-fields { display: grid; gap: 13px; }
     .cwp-settings-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; align-items: start; }
+    .cwp-model-field { grid-column: 1 / -1; }
     .cwp-wide-field { grid-column: 1 / -1; }
     .cwp-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
     .cwp-actions button { width: auto; }
@@ -446,6 +447,7 @@ func (a *app) renderStatusPage() []byte {
       .cwp-layout { display: grid; grid-template-columns: 1fr; }
       .cwp-side { width: auto; }
       .cwp-settings-grid { grid-template-columns: 1fr; }
+      .cwp-model-field { grid-column: auto; }
       .cwp-wide-field { grid-column: auto; }
       .cwp-actions { display: grid; }
       .cwp-actions button { width: 100%; }
@@ -480,7 +482,7 @@ func (a *app) renderStatusPage() []byte {
               <p class="cwp-muted">插件会在每个目标时间前 1 分钟内发送。如果同一认证文件距离上次成功不足 5 小时，会在该 1 分钟窗口内等待；等不到就跳过，避免提前刷新失败。</p>
             </div>
             <div class="cwp-settings-grid">
-              <label><span>模型</span>
+              <label class="cwp-model-field"><span>模型</span>
                 <textarea id="model" spellcheck="false" placeholder="gpt-5.4, claude-sonnet-4-6"></textarea>
                 <span class="cwp-muted">可填多个模型，支持逗号、中文逗号、顿号、分号或换行分隔。</span>
               </label>
@@ -493,7 +495,7 @@ func (a *app) renderStatusPage() []byte {
               <label><span>后台检查间隔</span>
                 <input id="tickInterval" spellcheck="false" placeholder="5s">
               </label>
-              <label class="cwp-wide-field"><span>预热内容</span>
+              <label><span>预热内容</span>
                 <textarea id="prompt" spellcheck="false" placeholder="hi"></textarea>
               </label>
             </div>
