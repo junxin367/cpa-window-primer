@@ -496,7 +496,7 @@ func (a *app) renderStatusPage() []byte {
                 <input id="tickInterval" spellcheck="false" placeholder="5s">
               </label>
               <label><span>预热内容</span>
-                <textarea id="prompt" spellcheck="false" placeholder="hi"></textarea>
+                <input id="prompt" spellcheck="false" placeholder="hi">
               </label>
             </div>
           </div>
