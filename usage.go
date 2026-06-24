@@ -34,6 +34,13 @@ type usageEntry struct {
 	Err             string
 }
 
+// usageQuotaBlock 记录额度接口判断出的阻塞窗口。
+type usageQuotaBlock struct {
+	Until   time.Time
+	Reason  string
+	Blocked bool
+}
+
 // rpcHTTPRequest 是 host.http.do 的请求包裹结构。
 type rpcHTTPRequest struct {
 	Method  string      `json:"method,omitempty"`
@@ -128,6 +135,64 @@ func fetchCodexUsage(authID, authIndex, email string) usageEntry {
 	}
 	parseCodexUsageBody(resp.Body, &entry)
 	return entry
+}
+
+func fetchAuthUsage(entry pluginapi.HostAuthFileEntry) usageEntry {
+	authID := authIDForEntry(entry)
+	authIndex := strings.TrimSpace(entry.AuthIndex)
+	if authIndex == "" {
+		authIndex = authID
+	}
+	switch classifyProvider(entry.Provider, entry.Type) {
+	case "codex":
+		return fetchCodexUsage(authID, authIndex, entry.Email)
+	case "claude":
+		return fetchClaudeUsage(authID, authIndex, entry.Email)
+	default:
+		return usageEntry{AuthID: authID, Err: "unsupported provider"}
+	}
+}
+
+func usageQuotaBlocked(entry usageEntry, models []string, now time.Time) usageQuotaBlock {
+	if entry.Err != "" {
+		return usageQuotaBlock{}
+	}
+	if block := quotaBlockForWindow(entry.Secondary, "周限额已满", now); block.Blocked {
+		return block
+	}
+	if block := quotaBlockForWindow(entry.Primary, "5小时额度已满", now); block.Blocked {
+		return block
+	}
+	if entry.HasSonnet && modelListContains(models, "sonnet") {
+		if block := quotaBlockForWindow(entry.SonnetSecondary, "Sonnet 周限额已满", now); block.Blocked {
+			return block
+		}
+	}
+	return usageQuotaBlock{}
+}
+
+func quotaBlockForWindow(window usageWindow, reason string, now time.Time) usageQuotaBlock {
+	if !window.HasData || window.UsedPercent < 100 {
+		return usageQuotaBlock{}
+	}
+	until := window.ResetAt
+	if until.IsZero() || !until.After(now) {
+		until = now.Add(5 * time.Minute)
+	}
+	return usageQuotaBlock{Until: until, Reason: reason, Blocked: true}
+}
+
+func modelListContains(models []string, marker string) bool {
+	marker = strings.ToLower(strings.TrimSpace(marker))
+	if marker == "" {
+		return false
+	}
+	for _, model := range models {
+		if strings.Contains(strings.ToLower(model), marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseCodexUsageBody(body []byte, entry *usageEntry) {

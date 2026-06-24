@@ -128,19 +128,21 @@ func (a *app) runDue(now time.Time, stop <-chan struct{}, runID uint64) {
 		return
 	}
 	for _, authID := range cfg.AuthIDs {
-		if _, ok := allowed[authID]; !ok {
+		entry, ok := allowed[authID]
+		if !ok {
 			continue
 		}
 		if _, _, blocked := state.quotaBlockInfo(authID, now); blocked {
 			continue
 		}
 		for _, clock := range cfg.Clocks {
-			a.evaluateAuthWindow(now, cfg, authID, clock, stop, runID)
+			a.evaluateAuthWindow(now, cfg, entry, clock, stop, runID)
 		}
 	}
 }
 
-func (a *app) evaluateAuthWindow(now time.Time, cfg runtimeConfig, authID string, clock clockTime, stop <-chan struct{}, runID uint64) {
+func (a *app) evaluateAuthWindow(now time.Time, cfg runtimeConfig, entry pluginapi.HostAuthFileEntry, clock clockTime, stop <-chan struct{}, runID uint64) {
+	authID := authIDForEntry(entry)
 	a.mu.Lock()
 	last := a.state.lastSuccess(authID)
 	_, target := windowFor(now, clock, cfg.LeadDuration)
@@ -164,10 +166,13 @@ func (a *app) evaluateAuthWindow(now time.Time, cfg runtimeConfig, authID string
 	switch decision.Action {
 	case windowActionSend:
 		defer a.clearPending(authID, key, runID)
+		if a.skipScheduledWarmupWhenQuotaFull(entry, key, cfg) {
+			return
+		}
 		a.executeWarmup(authID, key, cfg, "", false)
 	case windowActionWait:
 		if !isPending {
-			go a.executeDelayed(stop, runID, authID, key, cfg, decision.SendAt, decision.Target)
+			go a.executeDelayed(stop, runID, entry, key, cfg, decision.SendAt, decision.Target)
 		}
 	}
 }
@@ -176,7 +181,8 @@ func windowPendingKey(authID, windowKey string) string {
 	return authID + "\x00" + windowKey
 }
 
-func (a *app) executeDelayed(stop <-chan struct{}, runID uint64, authID, windowKey string, cfg runtimeConfig, sendAt, target time.Time) {
+func (a *app) executeDelayed(stop <-chan struct{}, runID uint64, entry pluginapi.HostAuthFileEntry, windowKey string, cfg runtimeConfig, sendAt, target time.Time) {
+	authID := authIDForEntry(entry)
 	delay := time.Until(sendAt)
 	if delay < 0 {
 		delay = 0
@@ -196,7 +202,38 @@ func (a *app) executeDelayed(stop <-chan struct{}, runID uint64, authID, windowK
 		a.recordWindowSkip(authID, windowKey, "min_interval_not_met", now, cfg.StatePath)
 		return
 	}
+	if a.skipScheduledWarmupWhenQuotaFull(entry, windowKey, cfg) {
+		return
+	}
 	a.executeWarmup(authID, windowKey, cfg, "", false)
+}
+
+func (a *app) skipScheduledWarmupWhenQuotaFull(entry pluginapi.HostAuthFileEntry, windowKey string, cfg runtimeConfig) bool {
+	authID := authIDForEntry(entry)
+	if authID == "" {
+		return true
+	}
+	now := time.Now()
+	models := warmupModelCandidates(cfg, authID)
+	block := usageQuotaBlocked(fetchAuthUsage(entry), models, now)
+	if !block.Blocked {
+		return false
+	}
+	record := attemptRecord{
+		At:        now,
+		WindowKey: windowKey,
+		Model:     strings.Join(models, ", "),
+		Success:   false,
+		Error:     quotaBlockedError(block.Reason, block.Until),
+	}
+	a.mu.Lock()
+	a.state.recordAttempt(authID, record)
+	a.state.recordQuotaBlocked(authID, now, block.Until, block.Reason)
+	if err := saveState(cfg.StatePath, a.state); err != nil {
+		a.lastError = err.Error()
+	}
+	a.mu.Unlock()
+	return true
 }
 
 func (a *app) clearPending(authID, windowKey string, runID uint64) {
