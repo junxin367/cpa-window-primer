@@ -1,0 +1,28 @@
+management.go
+  s_7af7390ce4d120::t_7eb42191ec0149 485
+  s_7af7390ce4d120::t_f3979581d3bd9f 484
+  s_7af7390ce4d120::t_5443684b1ea5e8 283,577,596,805,829,892
+host_test.go
+  s_7af7390ce4d120::t_a2b774ba4825ae 1-40
+registry.json
+  s_7af7390ce4d120::t_266497a35301ef 9
+host.go
+  s_7af7390ce4d120::t_340f1a3bb139dd 91,191,202,207,249,282,287,312,316,321,324,339,344,370,373-377,410
+  s_7af7390ce4d120::t_5972f65322bb2d 378
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.11",
+  "base_commit_sha": "8925d57aada85aedfccf4379ac9c46a1e3031514",
+  "prompts": {},
+  "sessions": {
+    "s_7af7390ce4d120": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eedb2-12ef-7b70-a87b-915ea4928836",
+        "model": "gpt-5.5"
+      },
+      "human_author": "刘俊鑫 <673638712@qq.com>"
+    }
+  }
+}
