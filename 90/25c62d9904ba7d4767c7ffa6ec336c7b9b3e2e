@@ -1,0 +1,21 @@
+management.go
+  s_7af7390ce4d120::t_d8f6b0ae4ecdf7 319,357,450,485,498
+registry.json
+  s_7af7390ce4d120::t_ed4f6d8dafb613 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.11",
+  "base_commit_sha": "9025c62d9904ba7d4767c7ffa6ec336c7b9b3e2e",
+  "prompts": {},
+  "sessions": {
+    "s_7af7390ce4d120": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eedb2-12ef-7b70-a87b-915ea4928836",
+        "model": "gpt-5.5"
+      },
+      "human_author": "刘俊鑫 <673638712@qq.com>"
+    }
+  }
+}
