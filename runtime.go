@@ -465,6 +465,9 @@ func (a *app) updateConfigFromBody(raw []byte) (runtimeConfig, error) {
 	if err != nil {
 		return runtimeConfig{}, err
 	}
+	if err := validateConfigForSave(cfg); err != nil {
+		return runtimeConfig{}, err
+	}
 	normalized, err := normalizeConfig(cfg)
 	if err != nil {
 		return runtimeConfig{}, err

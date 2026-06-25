@@ -174,7 +174,7 @@ func buildUsageMessage(entries []usageEntry) string {
 		sonnet := aggregateGroup(claude, true)
 		var extra []usageLineItem
 		if sonnet.HasData {
-			extra = append(extra, usageLineItem{"Sonnet周限额", sonnet.SecondaryPercent, sonnet.SecondaryReset})
+			extra = append(extra, usageLineItem{"Sonnet 周限额", sonnet.SecondaryPercent, sonnet.SecondaryReset})
 		}
 		writeGroup(&b, aggregateGroup(claude, false), extra)
 	}

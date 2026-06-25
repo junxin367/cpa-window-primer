@@ -56,13 +56,14 @@ type runtimeConfig struct {
 
 func defaultPluginConfig() pluginConfig {
 	return pluginConfig{
-		Enabled:      true,
-		Times:        append([]string(nil), defaultTimes...),
-		Model:        defaultModel,
-		Prompt:       defaultPrompt,
-		MinInterval:  defaultMinInterval,
-		LeadTime:     defaultLead,
-		TickInterval: defaultTick,
+		Enabled:        true,
+		Times:          append([]string(nil), defaultTimes...),
+		Model:          defaultModel,
+		Prompt:         defaultPrompt,
+		MinInterval:    defaultMinInterval,
+		LeadTime:       defaultLead,
+		TickInterval:   defaultTick,
+		UsagePushTimes: append([]string(nil), defaultUsagePushTimes...),
 	}
 }
 
@@ -137,6 +138,9 @@ func normalizeConfig(cfg pluginConfig) (runtimeConfig, error) {
 
 	cfg.WebhookURL = strings.TrimSpace(cfg.WebhookURL)
 	cfg.UsagePushTimes = uniqueTrimmed(cfg.UsagePushTimes)
+	if len(cfg.UsagePushTimes) == 0 {
+		cfg.UsagePushTimes = append([]string(nil), defaultUsagePushTimes...)
+	}
 	usageClocks := make([]clockTime, 0, len(cfg.UsagePushTimes))
 	for _, item := range cfg.UsagePushTimes {
 		clock, err := parseClock(item)
@@ -266,6 +270,43 @@ func mergeConfigPatch(current pluginConfig, raw []byte) (pluginConfig, error) {
 	// Runtime management updates intentionally ignore path fields. Paths are
 	// boot-time/operator settings and must not become arbitrary API writes.
 	return next, nil
+}
+
+func validateConfigForSave(cfg pluginConfig) error {
+	var missing []string
+	if len(uniqueTrimmed(cfg.AuthIDs)) == 0 {
+		missing = append(missing, "认证文件")
+	}
+	if len(uniqueTrimmed(cfg.Times)) == 0 {
+		missing = append(missing, "发送窗口")
+	}
+	if strings.TrimSpace(cfg.Model) == "" {
+		missing = append(missing, "模型")
+	}
+	if strings.TrimSpace(cfg.Prompt) == "" {
+		missing = append(missing, "预热内容")
+	}
+	if strings.TrimSpace(cfg.MinInterval) == "" {
+		missing = append(missing, "最小间隔")
+	}
+	if strings.TrimSpace(cfg.LeadTime) == "" {
+		missing = append(missing, "提前触发窗口")
+	}
+	if strings.TrimSpace(cfg.TickInterval) == "" {
+		missing = append(missing, "后台检查间隔")
+	}
+	if cfg.UsagePushEnabled {
+		if strings.TrimSpace(cfg.WebhookURL) == "" {
+			missing = append(missing, "企微 / Webhook 地址")
+		}
+		if len(uniqueTrimmed(cfg.UsagePushTimes)) == 0 {
+			missing = append(missing, "推送时间")
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("请填写必填项：%s", strings.Join(missing, "、"))
+	}
+	return nil
 }
 
 func saveConfigOverride(path string, cfg pluginConfig) error {

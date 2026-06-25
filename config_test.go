@@ -17,6 +17,9 @@ func TestNormalizeConfigDefaults(t *testing.T) {
 	if got := cfg.Times; len(got) != 3 || got[0] != "07:00" || got[1] != "12:00" || got[2] != "17:00" {
 		t.Fatalf("Times = %#v, want defaults", got)
 	}
+	if got := cfg.UsagePushTimes; len(got) != 3 || got[0] != "10:00" || got[1] != "14:00" || got[2] != "18:00" {
+		t.Fatalf("UsagePushTimes = %#v, want defaults", got)
+	}
 }
 
 func TestNormalizeConfigSortsAndDeduplicatesTimes(t *testing.T) {

@@ -6,7 +6,7 @@
       "name": "CPA Window Primer",
       "description": "通过中文管理页选择 Codex、OpenAI、Claude 或 Anthropic 认证文件和每日时间窗口，自动发送轻量请求预热 5 小时窗口。",
       "author": "junxin367",
-      "version": "0.2.13",
+      "version": "0.2.14",
       "repository": "https://github.com/junxin367/cpa-window-primer",
       "homepage": "https://github.com/junxin367/cpa-window-primer",
       "tags": ["scheduler", "management", "oauth", "openai", "claude"]

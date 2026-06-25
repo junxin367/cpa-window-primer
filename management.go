@@ -479,7 +479,7 @@ func (a *app) renderStatusPage() []byte {
                 <button id="addTime" type="button" class="cwp-secondary">添加时间</button>
                 <button id="resetTimes" type="button" class="cwp-secondary">恢复 07:00 / 12:00 / 17:00</button>
               </div>
-              <p class="cwp-muted">插件会在每个目标时间前 1 分钟内发送。如果同一认证文件距离上次成功不足 5 小时，会在该 1 分钟窗口内等待；等不到就跳过，避免提前刷新失败。</p>
+              <p class="cwp-muted">插件会在每个目标时间前 1 分钟内发送。如果同一认证文件距离上次成功不足 5 小时，会在该 1 分钟窗口内等待；等不到就跳过，避免未满 5 小时就重复触发。</p>
             </div>
             <div class="cwp-settings-grid">
               <label class="cwp-model-field"><span>模型</span>
@@ -532,7 +532,7 @@ func (a *app) renderStatusPage() []byte {
             <label><span>CPA 管理密钥</span>
               <input id="managementKey" type="password" autocomplete="off" spellcheck="false">
             </label>
-            <p class="cwp-muted">刷新状态、保存配置和手动预热需要 CPA 管理密钥。已保存的后台预热不依赖本页面持续填写；密钥只用于本次页面请求，不会保存。</p>
+            <p class="cwp-muted">刷新状态、保存配置和手动预热需要 CPA 管理密钥。已保存的后台预热不依赖本页面持续打开；密钥会保存在浏览器本地，不会写入插件配置。</p>
             <div class="cwp-actions">
               <button id="saveConfig" type="button">保存配置</button>
               <button id="refreshSnapshot" type="button" class="cwp-secondary">刷新状态</button>
@@ -576,6 +576,7 @@ func (a *app) renderStatusPage() []byte {
 	out.Write(rawData)
 	out.WriteString(`;
     const DEFAULT_TIMES = ['07:00', '12:00', '17:00'];
+    const DEFAULT_PUSH_TIMES = ['10:00', '14:00', '18:00'];
     const DEFAULT_MODEL = 'gpt-5.4, claude-sonnet-4-6';
     const ENDPOINTS = {
       snapshot: '/v0/management/cpa-window-primer/snapshot',
@@ -602,7 +603,7 @@ func (a *app) renderStatusPage() []byte {
           tick_interval: config.tick_interval || '5s',
           webhook_url: config.webhook_url || '',
           usage_push_enabled: config.usage_push_enabled === true,
-          usage_push_times: Array.isArray(config.usage_push_times) ? config.usage_push_times : []
+          usage_push_times: Array.isArray(config.usage_push_times) && config.usage_push_times.length ? config.usage_push_times : DEFAULT_PUSH_TIMES.slice()
         },
         auths: Array.isArray(data.auths) ? data.auths : [],
         state: data.state && typeof data.state === 'object' ? data.state : { auths: {} },
@@ -780,7 +781,7 @@ func (a *app) renderStatusPage() []byte {
       if (!duration) return '可立即发送';
       const next = new Date(new Date(authState.last_success_at).getTime() + duration);
       if (Number.isNaN(next.getTime())) return '可立即发送';
-      if (Date.now() >= next.getTime()) return '可立卣发送';
+      if (Date.now() >= next.getTime()) return '可立即发送';
       return '冷却至 ' + next.toLocaleString('zh-CN', { hour12: false });
     }
 
@@ -836,7 +837,7 @@ func (a *app) renderStatusPage() []byte {
       renderTimes(config.times || DEFAULT_TIMES);
       field('webhookUrl').value = config.webhook_url || '';
       field('usagePushEnabled').checked = config.usage_push_enabled === true;
-      renderPushTimes(config.usage_push_times || []);
+      renderPushTimes(config.usage_push_times || DEFAULT_PUSH_TIMES);
     }
 
     function renderTimes(times) {
@@ -844,7 +845,7 @@ func (a *app) renderStatusPage() []byte {
     }
 
     function renderPushTimes(times) {
-      renderTimeList('pushTimeList', 'cwp-push-time-input', times || [], []);
+      renderTimeList('pushTimeList', 'cwp-push-time-input', times || [], DEFAULT_PUSH_TIMES);
     }
 
     function renderTimeList(listID, inputClass, times, fallback) {
@@ -900,6 +901,24 @@ func (a *app) renderStatusPage() []byte {
         usage_push_enabled: field('usagePushEnabled').checked,
         usage_push_times: collectPushTimes()
       };
+    }
+
+    function validateConfigBeforeSave(config) {
+      const missing = [];
+      if (!config.auth_ids.length) missing.push('认证文件');
+      if (!config.times.length) missing.push('发送窗口');
+      if (!config.model) missing.push('模型');
+      if (!config.prompt) missing.push('预热内容');
+      if (!config.min_interval) missing.push('最小间隔');
+      if (!config.lead_time) missing.push('提前触发窗口');
+      if (!config.tick_interval) missing.push('后台检查间隔');
+      if (config.usage_push_enabled) {
+        if (!config.webhook_url) missing.push('企微 / Webhook 地址');
+        if (!config.usage_push_times.length) missing.push('推送时间');
+      }
+      if (missing.length) {
+        throw new Error('请填写必填项：' + missing.join('、'));
+      }
     }
 
     function renderAuths() {
@@ -1094,6 +1113,7 @@ func (a *app) renderStatusPage() []byte {
       clearStatus();
       try {
         const next = collectConfig();
+        validateConfigBeforeSave(next);
         const response = await fetch(ENDPOINTS.config, {
           method: 'PUT',
           headers: { ...authHeaders(), 'Content-Type': 'application/json' },
