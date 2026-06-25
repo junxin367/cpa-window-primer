@@ -103,6 +103,47 @@ func TestAggregateCodexGroupTreatsWeeklyExhaustedAsNoPrimaryQuota(t *testing.T) 
 	}
 }
 
+func TestAggregateGroupUsesEarliestResetTime(t *testing.T) {
+	primaryEarly := time.Date(2026, 6, 25, 16, 28, 0, 0, time.Local)
+	primaryMiddle := time.Date(2026, 6, 25, 19, 43, 0, 0, time.Local)
+	primaryLate := time.Date(2026, 6, 25, 19, 45, 0, 0, time.Local)
+	secondaryEarly := time.Date(2026, 7, 2, 9, 35, 0, 0, time.Local)
+	secondaryMiddle := time.Date(2026, 7, 2, 9, 37, 0, 0, time.Local)
+	secondaryLate := time.Date(2026, 7, 2, 9, 38, 0, 0, time.Local)
+
+	entries := []usageEntry{
+		{
+			Provider:  "codex",
+			Plan:      "pro",
+			Weight:    codexPlanWeight("pro"),
+			Primary:   usageWindow{UsedPercent: 95, ResetAt: primaryEarly, HasData: true},
+			Secondary: usageWindow{UsedPercent: 22, ResetAt: secondaryLate, HasData: true},
+		},
+		{
+			Provider:  "codex",
+			Plan:      "plus",
+			Weight:    codexPlanWeight("plus"),
+			Primary:   usageWindow{UsedPercent: 47, ResetAt: primaryMiddle, HasData: true},
+			Secondary: usageWindow{UsedPercent: 23, ResetAt: secondaryEarly, HasData: true},
+		},
+		{
+			Provider:  "codex",
+			Plan:      "plus",
+			Weight:    codexPlanWeight("plus"),
+			Primary:   usageWindow{UsedPercent: 6, ResetAt: primaryLate, HasData: true},
+			Secondary: usageWindow{UsedPercent: 17, ResetAt: secondaryMiddle, HasData: true},
+		},
+	}
+
+	got := aggregateGroup(entries, false)
+	if !got.PrimaryReset.Equal(primaryEarly) {
+		t.Fatalf("PrimaryReset = %s, want %s", got.PrimaryReset, primaryEarly)
+	}
+	if !got.SecondaryReset.Equal(secondaryEarly) {
+		t.Fatalf("SecondaryReset = %s, want %s", got.SecondaryReset, secondaryEarly)
+	}
+}
+
 func TestResetTextUsesShanghaiTime(t *testing.T) {
 	utcReset := time.Date(2026, 6, 30, 2, 0, 0, 0, time.UTC)
 	if got := resetText(utcReset); got != "06/30 10:00" {

@@ -86,8 +86,8 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 		primaryTotalWeight     float64
 		secondaryUsedWeighted  float64
 		secondaryTotalWeight   float64
-		latestPrimaryReset     time.Time
-		latestSecondaryReset   time.Time
+		earliestPrimaryReset   time.Time
+		earliestSecondaryReset time.Time
 		any                    bool
 	)
 	for _, e := range entries {
@@ -107,8 +107,8 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 		if secondary.HasData {
 			secondaryUsedWeighted += secondary.UsedPercent * e.Weight
 			secondaryTotalWeight += e.Weight
-			if secondary.ResetAt.After(latestSecondaryReset) {
-				latestSecondaryReset = secondary.ResetAt
+			if earlierReset(earliestSecondaryReset, secondary.ResetAt) {
+				earliestSecondaryReset = secondary.ResetAt
 			}
 			any = true
 		}
@@ -121,8 +121,8 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 			}
 			primaryUsedWeighted += effectivePrimary * e.Weight
 			primaryTotalWeight += e.Weight
-			if !secondaryExhausted && primary.ResetAt.After(latestPrimaryReset) {
-				latestPrimaryReset = primary.ResetAt
+			if !secondaryExhausted && earlierReset(earliestPrimaryReset, primary.ResetAt) {
+				earliestPrimaryReset = primary.ResetAt
 			}
 			any = true
 		}
@@ -130,13 +130,20 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 	res := aggregateResult{HasData: any}
 	if primaryTotalWeight > 0 {
 		res.PrimaryPercent = primaryUsedWeighted / primaryTotalWeight
-		res.PrimaryReset = latestPrimaryReset
+		res.PrimaryReset = earliestPrimaryReset
 	}
 	if secondaryTotalWeight > 0 {
 		res.SecondaryPercent = secondaryUsedWeighted / secondaryTotalWeight
-		res.SecondaryReset = latestSecondaryReset
+		res.SecondaryReset = earliestSecondaryReset
 	}
 	return res
+}
+
+func earlierReset(current, candidate time.Time) bool {
+	if candidate.IsZero() {
+		return false
+	}
+	return current.IsZero() || candidate.Before(current)
 }
 
 func filterProvider(entries []usageEntry, provider string) []usageEntry {
