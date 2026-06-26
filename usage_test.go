@@ -202,3 +202,23 @@ func TestUsageQuotaBlockedBySonnetWeeklyLimitOnlyForSonnetModel(t *testing.T) {
 		t.Fatalf("sonnet model block = %#v, want Sonnet weekly block", block)
 	}
 }
+
+func TestUsagePushWorkday(t *testing.T) {
+	tests := []struct {
+		name string
+		day  time.Time
+		want bool
+	}{
+		{name: "monday", day: time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC), want: true},
+		{name: "friday", day: time.Date(2026, 6, 26, 10, 0, 0, 0, time.UTC), want: true},
+		{name: "saturday", day: time.Date(2026, 6, 27, 10, 0, 0, 0, time.UTC), want: false},
+		{name: "sunday", day: time.Date(2026, 6, 28, 10, 0, 0, 0, time.UTC), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isUsagePushWorkday(tt.day); got != tt.want {
+				t.Fatalf("isUsagePushWorkday(%s) = %v, want %v", tt.day, got, tt.want)
+			}
+		})
+	}
+}

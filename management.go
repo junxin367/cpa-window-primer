@@ -548,7 +548,7 @@ func (a *app) renderStatusPage() []byte {
           <div class="cwp-fields">
             <label class="cwp-inline">
               <input id="usagePushEnabled" type="checkbox">
-              <span>开启定时推送</span>
+              <span>开启工作日定时推送</span>
             </label>
             <label><span>企微 / Webhook 地址</span>
               <input id="webhookUrl" spellcheck="false" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...">
@@ -559,7 +559,7 @@ func (a *app) renderStatusPage() []byte {
               <div class="cwp-actions" style="margin-top: 9px;">
                 <button id="addPushTime" type="button" class="cwp-secondary">添加时间</button>
               </div>
-              <p class="cwp-muted">汇总已选 Codex / Claude 认证文件的 5 小时与周限额，到点推送到 webhook。</p>
+              <p class="cwp-muted">汇总已选 Codex / Claude 认证文件的 5 小时与周限额，仅工作日到点推送到 webhook。</p>
             </div>
             <div class="cwp-actions">
               <button id="refreshUsage" type="button" class="cwp-secondary">预览额度</button>

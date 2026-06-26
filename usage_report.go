@@ -310,6 +310,9 @@ func (a *app) runUsagePushDue(now time.Time) {
 	if strings.TrimSpace(cfg.WebhookURL) == "" {
 		return
 	}
+	if !isUsagePushWorkday(now) {
+		return
+	}
 	for _, clock := range cfg.UsagePushClocks {
 		if now.Hour() != clock.Hour || now.Minute() != clock.Minute {
 			continue
@@ -327,6 +330,11 @@ func (a *app) runUsagePushDue(now time.Time) {
 		}
 		return
 	}
+}
+
+func isUsagePushWorkday(now time.Time) bool {
+	weekday := now.Weekday()
+	return weekday >= time.Monday && weekday <= time.Friday
 }
 
 func (a *app) pushUsage() error {
