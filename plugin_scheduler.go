@@ -25,11 +25,44 @@ func pickAuthFromSchedulerHeaders(headers map[string][]string, candidates []plug
 		return "", false
 	}
 	for _, candidate := range candidates {
-		if strings.TrimSpace(candidate.ID) == target {
-			return target, true
+		candidateID := strings.TrimSpace(candidate.ID)
+		if candidateID != "" && schedulerCandidateMatches(candidate, target) {
+			return candidateID, true
 		}
 	}
 	return "", false
+}
+
+func schedulerCandidateMatches(candidate pluginapi.SchedulerAuthCandidate, target string) bool {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return false
+	}
+	if strings.TrimSpace(candidate.ID) == target {
+		return true
+	}
+	for _, key := range []string{"auth_index", "auth-index", "index", "name", "file_name", "filename"} {
+		if strings.TrimSpace(candidate.Attributes[key]) == target {
+			return true
+		}
+	}
+	for _, key := range []string{"auth_index", "auth-index", "index", "name", "file_name", "filename"} {
+		if strings.TrimSpace(schedulerMetadataString(candidate.Metadata[key])) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func schedulerMetadataString(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	default:
+		return ""
+	}
 }
 
 func schedulerHeaderValue(headers map[string][]string, name string) string {

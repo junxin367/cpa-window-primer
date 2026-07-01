@@ -33,3 +33,15 @@ func TestPickAuthFromSchedulerHeadersRequiresCandidate(t *testing.T) {
 		t.Fatalf("pickAuthFromSchedulerHeaders = %q/%v, want empty/false", got, ok)
 	}
 }
+
+func TestPickAuthFromSchedulerHeadersMatchesCandidateAttributes(t *testing.T) {
+	got, ok := pickAuthFromSchedulerHeaders(map[string][]string{
+		primerHeader: {"idx-b"},
+	}, []pluginapi.SchedulerAuthCandidate{
+		{ID: "auth-a", Attributes: map[string]string{"auth_index": "idx-a"}},
+		{ID: "auth-b", Attributes: map[string]string{"auth_index": "idx-b"}},
+	})
+	if !ok || got != "auth-b" {
+		t.Fatalf("pickAuthFromSchedulerHeaders = %q/%v, want auth-b/true", got, ok)
+	}
+}

@@ -54,6 +54,7 @@ type managementSnapshot struct {
 
 type managementAuthView struct {
 	ID                string     `json:"id"`
+	AuthIndex         string     `json:"auth_index,omitempty"`
 	Name              string     `json:"name"`
 	Provider          string     `json:"provider,omitempty"`
 	Status            string     `json:"status,omitempty"`
@@ -150,21 +151,51 @@ func (a *app) handleManualRun(req managementRequest) ([]byte, error) {
 		return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{"error": "auth_id is required"}))
 	}
 	cfg, _, _ := a.snapshot()
+	authID, err := normalizeWarmupAuthID(body.AuthID)
+	if err != nil {
+		if !body.Force {
+			return okEnvelope(jsonResponse(http.StatusBadGateway, map[string]string{"error": err.Error()}))
+		}
+		authID = body.AuthID
+	}
 	if !body.Force {
 		allowed, err := allowedAuthIDs()
 		if err != nil {
 			return okEnvelope(jsonResponse(http.StatusBadGateway, map[string]string{"error": err.Error()}))
 		}
-		if _, ok := allowed[body.AuthID]; !ok {
+		if _, ok := allowed[authID]; !ok {
 			return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{"error": "auth_id is not available for warmup"}))
 		}
 	}
-	record := a.executeWarmup(body.AuthID, "manual-"+time.Now().Format("20060102T150405"), cfg, req.HostCallbackID, body.Force)
+	record := a.executeWarmup(authID, "manual-"+time.Now().Format("20060102T150405"), cfg, req.HostCallbackID, body.Force)
 	status := http.StatusOK
 	if !record.Success {
 		status = http.StatusBadGateway
 	}
 	return okEnvelope(jsonResponse(status, record))
+}
+
+func normalizeWarmupAuthID(raw string) (string, error) {
+	target := strings.TrimSpace(raw)
+	if target == "" {
+		return "", nil
+	}
+	auths, err := callHostAuthList()
+	if err != nil {
+		return "", err
+	}
+	for _, auth := range auths {
+		id := strings.TrimSpace(auth.ID)
+		authIndex := strings.TrimSpace(auth.AuthIndex)
+		name := strings.TrimSpace(auth.Name)
+		if target == id || target == authIndex || target == name {
+			if id != "" {
+				return id, nil
+			}
+			return authIDForEntry(auth), nil
+		}
+	}
+	return target, nil
 }
 
 func htmlResponse(statusCode int, body []byte) managementResponse {
@@ -219,6 +250,7 @@ func (a *app) managementSnapshot() managementSnapshot {
 		}
 		rows = append(rows, managementAuthView{
 			ID:                id,
+			AuthIndex:         auth.AuthIndex,
 			Name:              auth.Name,
 			Provider:          auth.Provider,
 			Status:            auth.Status,
@@ -504,6 +536,7 @@ func (a *app) renderStatusPage() []byte {
         <section class="cwp-panel">
           <h2>认证文件</h2>
           <div class="cwp-actions" style="margin-bottom: 9px;">
+            <button id="batchWarmup" type="button" class="cwp-secondary">批量预热</button>
             <button id="selectAllAuths" type="button" class="cwp-secondary">全选</button>
             <button id="clearAuths" type="button" class="cwp-secondary">清空选择</button>
           </div>
@@ -1130,16 +1163,25 @@ func (a *app) renderStatusPage() []byte {
       }
     }
 
+    async function runWarmupRequest(authID, force) {
+      const response = await fetch(ENDPOINTS.run, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auth_id: authID, force: force === true })
+      });
+      const data = await readJSON(response);
+      if (!response.ok) {
+        const error = new Error(formatError(data, '手动预热失败'));
+        error.data = data;
+        throw error;
+      }
+      return data;
+    }
+
     async function runWarmup(authID, force) {
       clearStatus();
       try {
-        const response = await fetch(ENDPOINTS.run, {
-          method: 'POST',
-          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ auth_id: authID, force: force === true })
-        });
-        const data = await readJSON(response);
-        if (!response.ok) throw new Error(formatError(data, '手动预热失败'));
+        const data = await runWarmupRequest(authID, force);
         await refreshSnapshot(false);
         if (data && data.success === false) {
           setStatus('预热未生效：' + humanizeError(data.error || ''), true);
@@ -1148,7 +1190,53 @@ func (a *app) renderStatusPage() []byte {
         }
       } catch (error) {
         if (error.connectionStatus) return;
-        setStatus(error.message || String(error), true);
+        const data = error.data || {};
+        const message = data && data.error ? humanizeError(data.error) : (error.message || String(error));
+        setStatus('预热未生效：' + message, true);
+      }
+    }
+
+    async function runBatchWarmup() {
+      clearStatus();
+      const authIDs = collectAuthIDs();
+      if (!authIDs.length) {
+        setStatus('请先选择认证文件。', true);
+        return;
+      }
+      const button = field('batchWarmup');
+      button.disabled = true;
+      button.textContent = '预热中...';
+      let success = 0;
+      const failures = [];
+      try {
+        for (const authID of authIDs) {
+          try {
+            const data = await runWarmupRequest(authID, true);
+            if (data && data.success === false) {
+              failures.push(authID + '：' + humanizeError(data.error || '未生效'));
+            } else {
+              success += 1;
+            }
+          } catch (error) {
+            if (error.connectionStatus) throw error;
+            const data = error.data || {};
+            const message = data && data.error ? humanizeError(data.error) : (error.message || String(error));
+            failures.push(authID + '：' + message);
+          }
+        }
+        await refreshSnapshot(false);
+        if (failures.length) {
+          const preview = failures.slice(0, 2).join('；');
+          const suffix = failures.length > 2 ? ' 等 ' + failures.length + ' 个失败' : '';
+          setStatus('批量预热完成：成功 ' + success + '，失败 ' + failures.length + '。' + preview + suffix, true);
+        } else {
+          setStatus('批量预热完成：成功 ' + success + '。');
+        }
+      } catch (error) {
+        if (!error.connectionStatus) setStatus(error.message || String(error), true);
+      } finally {
+        button.disabled = false;
+        button.textContent = '批量预热';
       }
     }
 
@@ -1163,6 +1251,7 @@ func (a *app) renderStatusPage() []byte {
     field('addPushTime').addEventListener('click', () => addTimeRow('pushTimeList', 'cwp-push-time-input', '09:00'));
     field('pushUsageNow').addEventListener('click', pushUsageNow);
     field('refreshUsage').addEventListener('click', () => refreshUsage(true));
+    field('batchWarmup').addEventListener('click', runBatchWarmup);
     field('selectAllAuths').addEventListener('click', () => {
       for (const item of document.querySelectorAll('.cwp-auth-check:not(:disabled)')) item.checked = true;
       state.snapshot.config.auth_ids = collectAuthIDs();
