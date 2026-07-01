@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
@@ -20,21 +21,44 @@ var usageDisplayLocation = func() *time.Location {
 	return loc
 }()
 
+const maxUsageFetchConcurrency = 4
+
+type usageTarget struct {
+	AuthID    string
+	AuthIndex string
+	Provider  string
+	Email     string
+}
+
 // collectUsage 拉取所有已选认证文件的额度，按 provider 分组返回。
 func (a *app) collectUsage() []usageEntry {
 	cfg, _, _ := a.snapshot()
 	if len(cfg.AuthIDs) == 0 {
 		return nil
 	}
-	selected := map[string]bool{}
-	for _, id := range cfg.AuthIDs {
-		selected[id] = true
-	}
 	auths, err := callHostAuthList()
 	if err != nil {
 		return []usageEntry{{Err: err.Error()}}
 	}
-	out := make([]usageEntry, 0, len(auths))
+	targets := collectUsageTargets(cfg.AuthIDs, auths)
+	if len(targets) == 0 {
+		return nil
+	}
+	return fetchUsageTargets(targets)
+}
+
+func collectUsageTargets(authIDs []string, auths []pluginapi.HostAuthFileEntry) []usageTarget {
+	selected := map[string]bool{}
+	for _, id := range authIDs {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			selected[id] = true
+		}
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+	targets := make([]usageTarget, 0, len(auths))
 	for _, auth := range auths {
 		if !isManagedOAuthAuth(auth) {
 			continue
@@ -54,12 +78,65 @@ func (a *app) collectUsage() []usageEntry {
 		provider := classifyProvider(auth.Provider, auth.Type)
 		switch provider {
 		case "codex":
-			out = append(out, fetchCodexUsage(id, strings.TrimSpace(auth.AuthIndex), auth.Email))
+			targets = append(targets, usageTarget{
+				AuthID:    id,
+				AuthIndex: strings.TrimSpace(auth.AuthIndex),
+				Provider:  provider,
+				Email:     auth.Email,
+			})
 		case "claude":
-			out = append(out, fetchClaudeUsage(id, strings.TrimSpace(auth.AuthIndex), auth.Email))
+			targets = append(targets, usageTarget{
+				AuthID:    id,
+				AuthIndex: strings.TrimSpace(auth.AuthIndex),
+				Provider:  provider,
+				Email:     auth.Email,
+			})
 		}
 	}
+	return targets
+}
+
+func fetchUsageTargets(targets []usageTarget) []usageEntry {
+	out := make([]usageEntry, len(targets))
+	workers := usageFetchConcurrency(len(targets))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				out[index] = fetchUsageTarget(targets[index])
+			}
+		}()
+	}
+	for index := range targets {
+		jobs <- index
+	}
+	close(jobs)
+	wg.Wait()
 	return out
+}
+
+func usageFetchConcurrency(count int) int {
+	if count <= 1 {
+		return 1
+	}
+	if count < maxUsageFetchConcurrency {
+		return count
+	}
+	return maxUsageFetchConcurrency
+}
+
+func fetchUsageTarget(target usageTarget) usageEntry {
+	switch target.Provider {
+	case "codex":
+		return fetchCodexUsage(target.AuthID, target.AuthIndex, target.Email)
+	case "claude":
+		return fetchClaudeUsage(target.AuthID, target.AuthIndex, target.Email)
+	default:
+		return usageEntry{AuthID: target.AuthID, Provider: target.Provider, Email: target.Email, Err: "unsupported provider"}
+	}
 }
 
 func authEntrySelected(selected map[string]bool, entry pluginapi.HostAuthFileEntry) bool {
@@ -113,11 +190,17 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 		primary := e.Primary
 		secondary := e.Secondary
 		if sonnet {
-			if !e.HasSonnet {
+			if e.HasSonnet {
+				primary = e.SonnetPrimary
+				secondary = e.SonnetSecondary
+			} else if e.Primary.HasData || e.Secondary.HasData {
+				// 部分 Claude 认证文件不会返回 seven_day_sonnet。
+				// 按用户约定：未返回 Sonnet 时按 0% 已用参与汇总。
+				primary = usageWindow{}
+				secondary = usageWindow{UsedPercent: 0, HasData: true}
+			} else {
 				continue
 			}
-			primary = e.SonnetPrimary
-			secondary = e.SonnetSecondary
 		}
 		// 周限额加权。
 		if secondary.HasData {

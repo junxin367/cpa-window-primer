@@ -608,6 +608,7 @@ func (a *app) renderStatusPage() []byte {
     const DEFAULT_TIMES = ['07:00', '12:00', '17:00'];
     const DEFAULT_PUSH_TIMES = ['10:00', '14:00', '18:00'];
     const DEFAULT_MODEL = 'gpt-5.4, claude-sonnet-4-6';
+    const BATCH_WARMUP_CONCURRENCY = 4;
     const ENDPOINTS = {
       snapshot: '/v0/management/cpa-window-primer/snapshot',
       config: '/v0/management/cpa-window-primer/config',
@@ -1251,22 +1252,41 @@ func (a *app) renderStatusPage() []byte {
       button.textContent = '预热中...';
       let success = 0;
       const failures = [];
+      let nextIndex = 0;
+      let done = 0;
+      const total = authIDs.length;
+      const workers = Math.min(BATCH_WARMUP_CONCURRENCY, total);
+      const updateProgress = () => {
+        button.textContent = '预热中 ' + done + '/' + total;
+      };
       try {
-        for (const authID of authIDs) {
-          try {
-            const data = await runWarmupRequest(authID, true);
-            if (data && data.success === false) {
-              failures.push(authID + '：' + humanizeError(data.error || '未生效'));
-            } else {
-              success += 1;
+        updateProgress();
+        async function worker() {
+          while (nextIndex < total) {
+            const authID = authIDs[nextIndex++];
+            try {
+              const data = await runWarmupRequest(authID, true);
+              if (data && data.success === false) {
+                failures.push(authID + '：' + humanizeError(data.error || '未生效'));
+              } else {
+                success += 1;
+              }
+            } catch (error) {
+              if (error.connectionStatus) throw error;
+              const data = error.data || {};
+              const message = data && data.error ? humanizeError(data.error) : (error.message || String(error));
+              failures.push(authID + '：' + message);
+            } finally {
+              done += 1;
+              updateProgress();
             }
-          } catch (error) {
-            if (error.connectionStatus) throw error;
-            const data = error.data || {};
-            const message = data && data.error ? humanizeError(data.error) : (error.message || String(error));
-            failures.push(authID + '：' + message);
           }
         }
+        const tasks = [];
+        for (let i = 0; i < workers; i += 1) {
+          tasks.push(worker());
+        }
+        await Promise.all(tasks);
         await refreshSnapshot(false);
         if (failures.length) {
           const preview = failures.slice(0, 2).join('；');

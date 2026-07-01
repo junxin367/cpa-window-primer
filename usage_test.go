@@ -172,6 +172,39 @@ func TestClaudeGroupViewIncludesSonnetWeeklyLine(t *testing.T) {
 	}
 }
 
+func TestAggregateSonnetTreatsMissingSonnetAsZeroUsed(t *testing.T) {
+	entries := []usageEntry{
+		{
+			Provider:        "claude",
+			Weight:          1,
+			Primary:         usageWindow{UsedPercent: 10, HasData: true},
+			Secondary:       usageWindow{UsedPercent: 20, HasData: true},
+			SonnetSecondary: usageWindow{UsedPercent: 30, HasData: true},
+			HasSonnet:       true,
+		},
+		{
+			Provider:  "claude",
+			Weight:    1,
+			Primary:   usageWindow{UsedPercent: 10, HasData: true},
+			Secondary: usageWindow{UsedPercent: 20, HasData: true},
+		},
+		{
+			Provider: "claude",
+			Weight:   1,
+			Err:      "usage status 401",
+		},
+	}
+
+	agg := aggregateGroup(entries, true)
+	if !agg.HasData {
+		t.Fatal("aggregateGroup HasData = false, want true")
+	}
+	if agg.SecondaryPercent != 15 {
+		t.Fatalf("SecondaryPercent = %v, want (30+0)/2 = 15", agg.SecondaryPercent)
+	}
+
+}
+
 func TestBuildUsageMessageShowsEmptyState(t *testing.T) {
 	got := buildUsageMessage(nil)
 	if !strings.Contains(got, "暂无额度数据") {
