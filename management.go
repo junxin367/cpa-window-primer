@@ -159,7 +159,7 @@ func (a *app) handleManualRun(req managementRequest) ([]byte, error) {
 		authID = body.AuthID
 	}
 	if !body.Force {
-		allowed, err := allowedAuthIDs()
+		allowed, err := schedulableAuthIDs()
 		if err != nil {
 			return okEnvelope(jsonResponse(http.StatusBadGateway, map[string]string{"error": err.Error()}))
 		}
@@ -185,11 +185,8 @@ func normalizeWarmupAuthID(raw string) (string, error) {
 		return "", err
 	}
 	for _, auth := range auths {
-		id := strings.TrimSpace(auth.ID)
-		authIndex := strings.TrimSpace(auth.AuthIndex)
-		name := strings.TrimSpace(auth.Name)
-		if target == id || target == authIndex || target == name {
-			if id != "" {
+		if authEntrySelected(map[string]bool{target: true}, auth) {
+			if id := strings.TrimSpace(auth.ID); id != "" {
 				return id, nil
 			}
 			return authIDForEntry(auth), nil
@@ -792,22 +789,38 @@ func (a *app) renderStatusPage() []byte {
       return text;
     }
 
+    function compactText(raw, maxLength) {
+      const text = String(raw || '').trim();
+      const limit = maxLength || 96;
+      return text.length > limit ? text.slice(0, limit) + '…' : text;
+    }
+
     function statusLabel(auth) {
       const raw = String(auth && auth.status || '').trim();
       const lower = raw.toLowerCase();
-      if (lower === 'active' || lower === 'ok' || lower === 'normal') return '正常';
       // 优先用后端给出的阻塞原因（已是中文），额度类会被归一为“额度已满”。
       if (auth && auth.blocked_reason) return humanizeError(auth.blocked_reason);
+      if (lower === 'active' || lower === 'ok' || lower === 'normal') return '正常';
       if (lower === 'error' || lower === 'blocked' || lower === 'unavailable') return '不可用';
       return raw || '未知';
     }
 
-    function nextAllowedText(authState) {
+    function nextAllowedText(authState, auth) {
       if (authState && authState.quota_blocked_until) {
         const until = new Date(authState.quota_blocked_until);
         if (!Number.isNaN(until.getTime()) && Date.now() < until.getTime()) {
           return '额度已满，忽略至 ' + until.toLocaleString('zh-CN', { hour12: false });
         }
+      }
+      const hostUntilValue = auth && (auth.quota_blocked_until || auth.next_retry_after);
+      if (hostUntilValue) {
+        const until = new Date(hostUntilValue);
+        if (!Number.isNaN(until.getTime()) && Date.now() < until.getTime()) {
+          return '额度已满，忽略至 ' + until.toLocaleString('zh-CN', { hour12: false });
+        }
+      }
+      if (auth && auth.blocked_reason && humanizeError(auth.blocked_reason) === '额度已满') {
+        return '额度已满，后台会在下次窗口前复查';
       }
       if (!authState || !authState.last_success_at) return '可立即发送';
       const duration = parseDuration(state.snapshot.config.min_interval);
@@ -1005,9 +1018,10 @@ func (a *app) renderStatusPage() []byte {
         const statusTd = document.createElement('td');
         statusTd.className = 'cwp-status-cell';
         const badge = document.createElement('span');
-        const isActive = String(auth.status || '').toLowerCase() === 'active';
+        const label = statusLabel(auth);
+        const isActive = label === '正常';
         badge.className = 'cwp-badge ' + (isActive ? 'cwp-ok' : 'cwp-warn');
-        badge.textContent = statusLabel(auth);
+        badge.textContent = label;
         statusTd.appendChild(badge);
         const details = [];
         // badge 已显示了友好化状态，不再重复追加相同语义的消息。
@@ -1030,7 +1044,7 @@ func (a *app) renderStatusPage() []byte {
         attemptTd.appendChild(attemptLine);
         const nextLine = document.createElement('div');
         nextLine.className = 'cwp-muted';
-        nextLine.textContent = nextAllowedText(itemState);
+        nextLine.textContent = nextAllowedText(itemState, auth);
         attemptTd.appendChild(nextLine);
         tr.appendChild(attemptTd);
 
@@ -1096,8 +1110,11 @@ func (a *app) renderStatusPage() []byte {
       if (!groups.length) {
         const empty = document.createElement('div');
         empty.className = 'cwp-muted';
-        empty.textContent = '暂无额度数据，请先选择 Codex / Claude 认证文件。';
+        empty.textContent = data && Array.isArray(data.errors) && data.errors.length
+          ? '额度读取失败，请检查认证文件或 CPA 管理密钥。'
+          : '暂无额度数据，请先选择 Codex / Claude 认证文件。';
         box.appendChild(empty);
+        renderUsageErrors(box, data && data.errors);
         return;
       }
       for (const g of groups) {
@@ -1110,9 +1127,35 @@ func (a *app) renderStatusPage() []byte {
         title.appendChild(k); title.appendChild(v);
         box.appendChild(title);
         if (g.has_data) {
-          box.appendChild(usageLine('5小时限额', g.primary_percent, g.primary_reset));
-          box.appendChild(usageLine('周限额', g.secondary_percent, g.secondary_reset));
+          const lines = Array.isArray(g.lines) && g.lines.length ? g.lines : [
+            { label: '5小时限额', percent: g.primary_percent, reset: g.primary_reset },
+            { label: '周限额', percent: g.secondary_percent, reset: g.secondary_reset }
+          ];
+          for (const line of lines) {
+            box.appendChild(usageLine(line.label, line.percent, line.reset));
+          }
         }
+      }
+      renderUsageErrors(box, data && data.errors);
+    }
+
+    function renderUsageErrors(box, errors) {
+      if (!Array.isArray(errors) || !errors.length) return;
+      const title = document.createElement('div');
+      title.className = 'cwp-muted';
+      title.textContent = '部分认证文件读取失败：';
+      box.appendChild(title);
+      for (const error of errors.slice(0, 4)) {
+        const item = document.createElement('div');
+        item.className = 'cwp-muted';
+        item.textContent = compactText(error, 120);
+        box.appendChild(item);
+      }
+      if (errors.length > 4) {
+        const more = document.createElement('div');
+        more.className = 'cwp-muted';
+        more.textContent = '还有 ' + (errors.length - 4) + ' 条失败信息未显示。';
+        box.appendChild(more);
       }
     }
 

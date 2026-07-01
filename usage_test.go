@@ -1,8 +1,11 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
 func TestCodexPlanWeightMatchesCPAManager(t *testing.T) {
@@ -144,6 +147,50 @@ func TestAggregateGroupUsesEarliestResetTime(t *testing.T) {
 	}
 }
 
+func TestClaudeGroupViewIncludesSonnetWeeklyLine(t *testing.T) {
+	reset := time.Date(2026, 6, 30, 2, 0, 0, 0, time.UTC)
+	base := aggregateResult{
+		HasData:          true,
+		PrimaryPercent:   10,
+		PrimaryReset:     reset.Add(-time.Hour),
+		SecondaryPercent: 20,
+		SecondaryReset:   reset,
+	}
+	view := groupViewWithExtra("claude", "CLAUDE", base, []usageMetricView{{
+		Label:   "Sonnet 周限额",
+		Percent: 42,
+		Reset:   resetText(reset),
+	}})
+	if view.Label != "CLAUDE" {
+		t.Fatalf("Label = %q, want CLAUDE", view.Label)
+	}
+	if len(view.Lines) != 3 {
+		t.Fatalf("Lines = %#v, want 5h, weekly and Sonnet weekly lines", view.Lines)
+	}
+	if view.Lines[2].Label != "Sonnet 周限额" || view.Lines[2].Percent != 42 {
+		t.Fatalf("line = %#v, want Sonnet weekly 42", view.Lines[2])
+	}
+}
+
+func TestBuildUsageMessageShowsEmptyState(t *testing.T) {
+	got := buildUsageMessage(nil)
+	if !strings.Contains(got, "暂无额度数据") {
+		t.Fatalf("message = %q, want empty usage hint", got)
+	}
+}
+
+func TestBuildUsageMessageOmitsReadErrors(t *testing.T) {
+	got := buildUsageMessage([]usageEntry{{
+		AuthID:   "auth-a",
+		Provider: "codex",
+		Email:    "a@example.com",
+		Err:      "usage status 401",
+	}})
+	if strings.Contains(got, "部分认证文件读取失败") || strings.Contains(got, "usage status 401") {
+		t.Fatalf("message = %q, want webhook message without read errors", got)
+	}
+}
+
 func TestResetTextUsesShanghaiTime(t *testing.T) {
 	utcReset := time.Date(2026, 6, 30, 2, 0, 0, 0, time.UTC)
 	if got := resetText(utcReset); got != "06/30 10:00" {
@@ -282,6 +329,15 @@ func TestReconcileQuotaBlockUpdatesStillExhaustedUsage(t *testing.T) {
 	}
 	if record.Error == "" || app.state.Auths["auth-a"].LastAttempt == nil {
 		t.Fatal("exhausted usage should record skipped attempt")
+	}
+}
+
+func TestHostQuotaBlockUntilUsesNextRetryAfter(t *testing.T) {
+	now := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	nextRetry := now.Add(30 * time.Minute)
+	got := hostQuotaBlockUntil(pluginapi.HostAuthFileEntry{NextRetryAfter: nextRetry}, 5*time.Hour, now)
+	if !got.Equal(nextRetry) {
+		t.Fatalf("hostQuotaBlockUntil = %s, want %s", got, nextRetry)
 	}
 }
 

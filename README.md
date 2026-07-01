@@ -93,6 +93,8 @@ GET  /v0/management/cpa-window-primer/config
 PUT  /v0/management/cpa-window-primer/config
 GET  /v0/management/cpa-window-primer/state
 POST /v0/management/cpa-window-primer/run
+GET  /v0/management/cpa-window-primer/usage
+POST /v0/management/cpa-window-primer/usage-push
 ```
 
 手动预热 payload：
@@ -104,4 +106,4 @@ POST /v0/management/cpa-window-primer/run
 }
 ```
 
-`force=false` 会遵守 5 小时最小间隔。`force=true` 仅建议调试时使用。
+`force=false` 会遵守 5 小时最小间隔。管理页的单个/批量手动预热会使用 `force=true`，用于确认指定认证文件能否立刻打通；手动预热成功不会更新后台定时使用的 `last_success_at`，因此不会打乱 07:00 / 12:00 / 17:00 等定时窗口。

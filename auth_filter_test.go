@@ -67,3 +67,38 @@ func TestIsSupportedOAuthAuth(t *testing.T) {
 		})
 	}
 }
+
+func TestIsSchedulableOAuthAuthIncludesQuotaBlocked(t *testing.T) {
+	auth := pluginapi.HostAuthFileEntry{
+		Provider:      "claude",
+		ID:            "auth-a",
+		Unavailable:   true,
+		StatusMessage: "quota exhausted",
+	}
+	if isSupportedOAuthAuth(auth) {
+		t.Fatal("quota blocked auth should not be directly supported")
+	}
+	if !isSchedulableOAuthAuth(auth) {
+		t.Fatal("quota blocked auth should remain schedulable for usage recheck")
+	}
+	auth.Disabled = true
+	if isSchedulableOAuthAuth(auth) {
+		t.Fatal("disabled auth should not be schedulable")
+	}
+}
+
+func TestAuthEntrySelectedMatchesIDIndexAndName(t *testing.T) {
+	auth := pluginapi.HostAuthFileEntry{
+		ID:        "auth-id",
+		AuthIndex: "auth-index",
+		Name:      "auth-file.json",
+	}
+	for _, selected := range []string{"auth-id", "auth-index", "auth-file.json"} {
+		if !authEntrySelected(map[string]bool{selected: true}, auth) {
+			t.Fatalf("authEntrySelected(%q) = false, want true", selected)
+		}
+	}
+	if authEntrySelected(map[string]bool{"missing": true}, auth) {
+		t.Fatal("authEntrySelected accepted unrelated key")
+	}
+}

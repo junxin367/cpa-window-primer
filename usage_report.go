@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
 var usageDisplayLocation = func() *time.Location {
@@ -22,6 +23,9 @@ var usageDisplayLocation = func() *time.Location {
 // collectUsage 拉取所有已选认证文件的额度，按 provider 分组返回。
 func (a *app) collectUsage() []usageEntry {
 	cfg, _, _ := a.snapshot()
+	if len(cfg.AuthIDs) == 0 {
+		return nil
+	}
 	selected := map[string]bool{}
 	for _, id := range cfg.AuthIDs {
 		selected[id] = true
@@ -40,10 +44,10 @@ func (a *app) collectUsage() []usageEntry {
 			continue
 		}
 		// 仅统计已选择的认证文件。
-		if len(selected) > 0 && !selected[id] {
+		if len(selected) > 0 && !authEntrySelected(selected, auth) {
 			continue
 		}
-		// 无额度/已禁用的忽略。
+		// 禁用的认证文件不参与统计；无额度账号仍参与额度复查。
 		if auth.Disabled {
 			continue
 		}
@@ -56,6 +60,18 @@ func (a *app) collectUsage() []usageEntry {
 		}
 	}
 	return out
+}
+
+func authEntrySelected(selected map[string]bool, entry pluginapi.HostAuthFileEntry) bool {
+	if len(selected) == 0 {
+		return true
+	}
+	for _, key := range authLookupKeys(entry) {
+		if selected[key] {
+			return true
+		}
+	}
+	return false
 }
 
 func classifyProvider(provider, typ string) string {
@@ -178,24 +194,8 @@ func buildUsageMessage(entries []usageEntry) string {
 		}
 		writeGroup(&b, aggregateGroup(claude, false), extra)
 	}
-
-	// 错误提示。
-	var errs []string
-	for _, e := range entries {
-		if e.Err != "" {
-			label := e.Email
-			if label == "" {
-				label = e.AuthID
-			}
-			errs = append(errs, fmt.Sprintf("%s: %s", label, e.Err))
-		}
-	}
-	if len(errs) > 0 {
-		sort.Strings(errs)
-		b.WriteString("\n> <font color=\"warning\">部分认证文件读取失败</font>\n")
-		for _, e := range errs {
-			b.WriteString("> " + e + "\n")
-		}
+	if len(codex) == 0 && len(claude) == 0 {
+		b.WriteString("\n> <font color=\"comment\">暂无额度数据，请先选择认证文件</font>\n")
 	}
 	return b.String()
 }
@@ -344,6 +344,9 @@ func (a *app) pushUsage() error {
 		return fmt.Errorf("webhook 地址未配置")
 	}
 	entries := a.collectUsage()
+	if len(entries) == 0 {
+		return fmt.Errorf("没有可推送的额度数据，请先选择认证文件")
+	}
 	a.reconcileQuotaBlocksFromUsageEntries(entries)
 	message := buildUsageMessage(entries)
 	return sendWebhook(webhook, message)
@@ -368,6 +371,19 @@ func sendWebhook(webhook, content string) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("webhook 返回 %d: %s", resp.StatusCode, truncateBody(resp.Body))
 	}
+	var result struct {
+		ErrCode int    `json:"errcode"`
+		ErrMsg  string `json:"errmsg"`
+	}
+	if len(bytes.TrimSpace(resp.Body)) > 0 {
+		if err := json.Unmarshal(resp.Body, &result); err == nil && result.ErrCode != 0 {
+			message := strings.TrimSpace(result.ErrMsg)
+			if message == "" {
+				message = truncateBody(resp.Body)
+			}
+			return fmt.Errorf("webhook 返回 errcode %d: %s", result.ErrCode, message)
+		}
+	}
 	return nil
 }
 
@@ -390,11 +406,19 @@ type usageSnapshotView struct {
 type usageGroupView struct {
 	Provider         string  `json:"provider"`
 	Label            string  `json:"label"`
+	Kind             string  `json:"kind,omitempty"`
 	PrimaryPercent   float64 `json:"primary_percent"`
 	PrimaryReset     string  `json:"primary_reset,omitempty"`
 	SecondaryPercent float64 `json:"secondary_percent"`
 	SecondaryReset   string  `json:"secondary_reset,omitempty"`
 	HasData          bool    `json:"has_data"`
+	Lines            []usageMetricView `json:"lines,omitempty"`
+}
+
+type usageMetricView struct {
+	Label   string  `json:"label"`
+	Percent float64 `json:"percent"`
+	Reset   string  `json:"reset,omitempty"`
 }
 
 func (a *app) usageSnapshot() usageSnapshotView {
@@ -408,10 +432,15 @@ func (a *app) usageSnapshot() usageSnapshotView {
 		view.Groups = append(view.Groups, groupView("codex", "GPT", aggregateGroup(codex, false)))
 	}
 	if claude := filterProvider(entries, "claude"); len(claude) > 0 {
-		view.Groups = append(view.Groups, groupView("claude", "CLAUDE", aggregateGroup(claude, false)))
+		var extra []usageMetricView
 		if sonnet := aggregateGroup(claude, true); sonnet.HasData {
-			view.Groups = append(view.Groups, groupView("claude", "Sonnet", sonnet))
+			extra = append(extra, usageMetricView{
+				Label:   "Sonnet 周限额",
+				Percent: sonnet.SecondaryPercent,
+				Reset:   resetText(sonnet.SecondaryReset),
+			})
 		}
+		view.Groups = append(view.Groups, groupViewWithExtra("claude", "CLAUDE", aggregateGroup(claude, false), extra))
 	}
 	for _, e := range entries {
 		if e.Err != "" {
@@ -438,7 +467,11 @@ func (a *app) reconcileQuotaBlocksFromUsageEntries(entries []usageEntry) {
 }
 
 func groupView(provider, label string, agg aggregateResult) usageGroupView {
-	return usageGroupView{
+	return groupViewWithExtra(provider, label, agg, nil)
+}
+
+func groupViewWithExtra(provider, label string, agg aggregateResult, extra []usageMetricView) usageGroupView {
+	view := usageGroupView{
 		Provider:         provider,
 		Label:            label,
 		PrimaryPercent:   agg.PrimaryPercent,
@@ -447,4 +480,12 @@ func groupView(provider, label string, agg aggregateResult) usageGroupView {
 		SecondaryReset:   resetText(agg.SecondaryReset),
 		HasData:          agg.HasData,
 	}
+	if agg.HasData {
+		view.Lines = []usageMetricView{
+			{Label: "5小时限额", Percent: agg.PrimaryPercent, Reset: resetText(agg.PrimaryReset)},
+			{Label: "周限额", Percent: agg.SecondaryPercent, Reset: resetText(agg.SecondaryReset)},
+		}
+		view.Lines = append(view.Lines, extra...)
+	}
+	return view
 }

@@ -122,16 +122,25 @@ func (a *app) runDue(now time.Time, stop <-chan struct{}, runID uint64) {
 	if !cfg.Enabled || len(cfg.AuthIDs) == 0 || len(cfg.Clocks) == 0 {
 		return
 	}
-	allowed, err := allowedAuthIDs()
+	allowed, err := schedulableAuthIDs()
 	if err != nil {
 		a.setLastError(err.Error())
 		return
 	}
+	seen := map[string]struct{}{}
 	for _, authID := range cfg.AuthIDs {
 		entry, ok := allowed[authID]
 		if !ok {
 			continue
 		}
+		entryID := authIDForEntry(entry)
+		if entryID == "" {
+			continue
+		}
+		if _, ok := seen[entryID]; ok {
+			continue
+		}
+		seen[entryID] = struct{}{}
 		for _, clock := range cfg.Clocks {
 			a.evaluateAuthWindow(now, cfg, entry, clock, stop, runID)
 		}
@@ -212,8 +221,15 @@ func (a *app) skipScheduledWarmupWhenQuotaFull(entry pluginapi.HostAuthFileEntry
 	}
 	now := time.Now()
 	models := warmupModelCandidates(cfg, authID)
-	_, blocked := a.reconcileQuotaBlockFromUsage(authID, windowKey, cfg, models, fetchAuthUsage(entry), now, true)
-	return blocked
+	usage := fetchAuthUsage(entry)
+	_, blocked := a.reconcileQuotaBlockFromUsage(authID, windowKey, cfg, models, usage, now, true)
+	if blocked {
+		return true
+	}
+	if usage.Err != "" && isHostAuthQuotaBlocked(entry, now) {
+		return a.recordHostQuotaBlockedAttempt(authID, windowKey, cfg, models, entry, now)
+	}
+	return false
 }
 
 func (a *app) clearPending(authID, windowKey string, runID uint64) {
@@ -345,7 +361,7 @@ func (a *app) recheckLocalQuotaBlockBeforeWarmup(authID, windowKey string, cfg r
 		return attemptRecord{}, false
 	}
 	models := warmupModelCandidates(cfg, authID)
-	allowed, err := allowedAuthIDs()
+	allowed, err := schedulableAuthIDs()
 	if err != nil {
 		a.setLastError(err.Error())
 		return a.recordLocalQuotaBlockedAttempt(authID, windowKey, cfg, models, until, reason, now), true
@@ -375,6 +391,39 @@ func (a *app) recordLocalQuotaBlockedAttempt(authID, windowKey string, cfg runti
 	}
 	a.mu.Unlock()
 	return record
+}
+
+func (a *app) recordHostQuotaBlockedAttempt(authID, windowKey string, cfg runtimeConfig, models []string, entry pluginapi.HostAuthFileEntry, now time.Time) bool {
+	reason := authBlockedReason(entry, true, false, "")
+	until := hostQuotaBlockUntil(entry, cfg.MinDuration, now)
+	record := attemptRecord{
+		At:        now,
+		WindowKey: windowKey,
+		Model:     strings.Join(models, ", "),
+		Success:   false,
+		Error:     quotaBlockedError(reason, until),
+	}
+	if record.Model == "" {
+		record.Model = cfg.Model
+	}
+	a.mu.Lock()
+	a.state.recordAttempt(authID, record)
+	a.state.recordQuotaBlocked(authID, now, until, reason)
+	if err := saveState(cfg.StatePath, a.state); err != nil {
+		a.lastError = err.Error()
+	}
+	a.mu.Unlock()
+	return true
+}
+
+func hostQuotaBlockUntil(entry pluginapi.HostAuthFileEntry, fallback time.Duration, now time.Time) time.Time {
+	if entry.NextRetryAfter.After(now) {
+		return entry.NextRetryAfter
+	}
+	if fallback <= 0 {
+		fallback = 5 * time.Hour
+	}
+	return now.Add(fallback)
 }
 
 func (a *app) reconcileQuotaBlockFromUsage(authID, windowKey string, cfg runtimeConfig, models []string, usage usageEntry, now time.Time, recordAttempt bool) (attemptRecord, bool) {

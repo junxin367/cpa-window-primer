@@ -60,10 +60,22 @@ func allowedAuthIDs() (map[string]pluginapi.HostAuthFileEntry, error) {
 		if !isSupportedOAuthAuth(entry) {
 			continue
 		}
-		authID := authIDForEntry(entry)
-		if authID != "" {
-			out[authID] = entry
+		addAuthLookupEntry(out, entry)
+	}
+	return out, nil
+}
+
+func schedulableAuthIDs() (map[string]pluginapi.HostAuthFileEntry, error) {
+	entries, err := callHostAuthList()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]pluginapi.HostAuthFileEntry)
+	for _, entry := range entries {
+		if !isSchedulableOAuthAuth(entry) {
+			continue
 		}
+		addAuthLookupEntry(out, entry)
 	}
 	return out, nil
 }
@@ -74,6 +86,23 @@ func authIDForEntry(entry pluginapi.HostAuthFileEntry) string {
 		authID = strings.TrimSpace(entry.AuthIndex)
 	}
 	return authID
+}
+
+func authLookupKeys(entry pluginapi.HostAuthFileEntry) []string {
+	return uniqueTrimmed([]string{
+		entry.ID,
+		entry.AuthIndex,
+		entry.Name,
+	})
+}
+
+func addAuthLookupEntry(out map[string]pluginapi.HostAuthFileEntry, entry pluginapi.HostAuthFileEntry) {
+	if out == nil {
+		return
+	}
+	for _, key := range authLookupKeys(entry) {
+		out[key] = entry
+	}
 }
 
 func providerForAuthID(authID string) string {
@@ -107,6 +136,13 @@ func callHostAuthGetRuntime(authIndex string) (pluginapi.HostAuthGetRuntimeRespo
 
 func isSupportedOAuthAuth(entry pluginapi.HostAuthFileEntry) bool {
 	if entry.Disabled || isHostAuthQuotaBlocked(entry, time.Now()) {
+		return false
+	}
+	return isManagedOAuthAuth(entry)
+}
+
+func isSchedulableOAuthAuth(entry pluginapi.HostAuthFileEntry) bool {
+	if entry.Disabled {
 		return false
 	}
 	return isManagedOAuthAuth(entry)
