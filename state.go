@@ -194,6 +194,18 @@ func (s *pluginState) recordQuotaBlocked(authID string, at, until time.Time, rea
 	item.QuotaBlockedReason = strings.TrimSpace(reason)
 }
 
+func (s *pluginState) clearQuotaBlocked(authID string) bool {
+	if s == nil || s.Auths == nil || s.Auths[authID] == nil {
+		return false
+	}
+	item := s.Auths[authID]
+	changed := item.QuotaBlockedAt != nil || item.QuotaBlockedUntil != nil || item.QuotaBlockedReason != ""
+	item.QuotaBlockedAt = nil
+	item.QuotaBlockedUntil = nil
+	item.QuotaBlockedReason = ""
+	return changed
+}
+
 func (s *pluginState) recordSkip(authID, windowKey, reason string, at time.Time) {
 	item := s.ensureAuth(authID)
 	item.Windows[windowKey] = windowRecord{At: at, Status: "skipped", Reason: reason}

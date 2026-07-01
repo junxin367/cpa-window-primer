@@ -118,7 +118,7 @@ func (a *app) worker(stop <-chan struct{}, interval time.Duration, runID uint64)
 }
 
 func (a *app) runDue(now time.Time, stop <-chan struct{}, runID uint64) {
-	cfg, state, _ := a.snapshot()
+	cfg, _, _ := a.snapshot()
 	if !cfg.Enabled || len(cfg.AuthIDs) == 0 || len(cfg.Clocks) == 0 {
 		return
 	}
@@ -130,9 +130,6 @@ func (a *app) runDue(now time.Time, stop <-chan struct{}, runID uint64) {
 	for _, authID := range cfg.AuthIDs {
 		entry, ok := allowed[authID]
 		if !ok {
-			continue
-		}
-		if _, _, blocked := state.quotaBlockInfo(authID, now); blocked {
 			continue
 		}
 		for _, clock := range cfg.Clocks {
@@ -215,25 +212,8 @@ func (a *app) skipScheduledWarmupWhenQuotaFull(entry pluginapi.HostAuthFileEntry
 	}
 	now := time.Now()
 	models := warmupModelCandidates(cfg, authID)
-	block := usageQuotaBlocked(fetchAuthUsage(entry), models, now)
-	if !block.Blocked {
-		return false
-	}
-	record := attemptRecord{
-		At:        now,
-		WindowKey: windowKey,
-		Model:     strings.Join(models, ", "),
-		Success:   false,
-		Error:     quotaBlockedError(block.Reason, block.Until),
-	}
-	a.mu.Lock()
-	a.state.recordAttempt(authID, record)
-	a.state.recordQuotaBlocked(authID, now, block.Until, block.Reason)
-	if err := saveState(cfg.StatePath, a.state); err != nil {
-		a.lastError = err.Error()
-	}
-	a.mu.Unlock()
-	return true
+	_, blocked := a.reconcileQuotaBlockFromUsage(authID, windowKey, cfg, models, fetchAuthUsage(entry), now, true)
+	return blocked
 }
 
 func (a *app) clearPending(authID, windowKey string, runID uint64) {
@@ -258,18 +238,12 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 	now := time.Now()
 	if !force {
 		a.mu.Lock()
-		if until, reason, blocked := a.state.quotaBlockInfo(authID, now); blocked {
-			record := attemptRecord{
-				At:        now,
-				WindowKey: windowKey,
-				Model:     cfg.Model,
-				Success:   false,
-				Error:     quotaBlockedError(reason, until),
-			}
-			a.state.recordAttempt(authID, record)
-			_ = saveState(cfg.StatePath, a.state)
+		if _, _, blocked := a.state.quotaBlockInfo(authID, now); blocked {
 			a.mu.Unlock()
-			return record
+			if record, stillBlocked := a.recheckLocalQuotaBlockBeforeWarmup(authID, windowKey, cfg, now); stillBlocked {
+				return record
+			}
+			a.mu.Lock()
 		}
 		last := a.state.lastSuccess(authID)
 		if !last.IsZero() && now.Before(last.Add(cfg.MinDuration)) {
@@ -361,6 +335,109 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 	}
 	a.mu.Unlock()
 	return record
+}
+
+func (a *app) recheckLocalQuotaBlockBeforeWarmup(authID, windowKey string, cfg runtimeConfig, now time.Time) (attemptRecord, bool) {
+	a.mu.Lock()
+	until, reason, blocked := a.state.quotaBlockInfo(authID, now)
+	a.mu.Unlock()
+	if !blocked {
+		return attemptRecord{}, false
+	}
+	models := warmupModelCandidates(cfg, authID)
+	allowed, err := allowedAuthIDs()
+	if err != nil {
+		a.setLastError(err.Error())
+		return a.recordLocalQuotaBlockedAttempt(authID, windowKey, cfg, models, until, reason, now), true
+	}
+	entry, ok := allowed[authID]
+	if !ok {
+		return a.recordLocalQuotaBlockedAttempt(authID, windowKey, cfg, models, until, reason, now), true
+	}
+	return a.reconcileQuotaBlockFromUsage(authID, windowKey, cfg, models, fetchAuthUsage(entry), now, true)
+}
+
+func (a *app) recordLocalQuotaBlockedAttempt(authID, windowKey string, cfg runtimeConfig, models []string, until time.Time, reason string, now time.Time) attemptRecord {
+	record := attemptRecord{
+		At:        now,
+		WindowKey: windowKey,
+		Model:     strings.Join(models, ", "),
+		Success:   false,
+		Error:     quotaBlockedError(reason, until),
+	}
+	if record.Model == "" {
+		record.Model = cfg.Model
+	}
+	a.mu.Lock()
+	a.state.recordAttempt(authID, record)
+	if err := saveState(cfg.StatePath, a.state); err != nil {
+		a.lastError = err.Error()
+	}
+	a.mu.Unlock()
+	return record
+}
+
+func (a *app) reconcileQuotaBlockFromUsage(authID, windowKey string, cfg runtimeConfig, models []string, usage usageEntry, now time.Time, recordAttempt bool) (attemptRecord, bool) {
+	if authID == "" {
+		authID = usage.AuthID
+	}
+	if authID == "" {
+		return attemptRecord{}, false
+	}
+	modelText := strings.Join(models, ", ")
+	if modelText == "" {
+		modelText = cfg.Model
+	}
+	if usage.Err != "" {
+		a.mu.Lock()
+		until, reason, blocked := a.state.quotaBlockInfo(authID, now)
+		if !blocked {
+			a.mu.Unlock()
+			return attemptRecord{}, false
+		}
+		record := attemptRecord{
+			At:        now,
+			WindowKey: windowKey,
+			Model:     modelText,
+			Success:   false,
+			Error:     quotaBlockedError(reason, until),
+		}
+		if recordAttempt {
+			a.state.recordAttempt(authID, record)
+			if err := saveState(cfg.StatePath, a.state); err != nil {
+				a.lastError = err.Error()
+			}
+		}
+		a.mu.Unlock()
+		return record, true
+	}
+
+	block := usageQuotaBlocked(usage, models, now)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if block.Blocked {
+		record := attemptRecord{
+			At:        now,
+			WindowKey: windowKey,
+			Model:     modelText,
+			Success:   false,
+			Error:     quotaBlockedError(block.Reason, block.Until),
+		}
+		if recordAttempt {
+			a.state.recordAttempt(authID, record)
+		}
+		a.state.recordQuotaBlocked(authID, now, block.Until, block.Reason)
+		if err := saveState(cfg.StatePath, a.state); err != nil {
+			a.lastError = err.Error()
+		}
+		return record, true
+	}
+	if a.state.clearQuotaBlocked(authID) {
+		if err := saveState(cfg.StatePath, a.state); err != nil {
+			a.lastError = err.Error()
+		}
+	}
+	return attemptRecord{}, false
 }
 
 func warmupErrorText(record attemptRecord) string {

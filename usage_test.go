@@ -222,3 +222,75 @@ func TestUsagePushWorkday(t *testing.T) {
 		})
 	}
 }
+
+func TestReconcileQuotaBlockClearsRecoveredUsage(t *testing.T) {
+	now := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	app := newTestUsageApp(t)
+	app.state.recordQuotaBlocked("auth-a", now.Add(-time.Minute), now.Add(24*time.Hour), "周限额已满")
+
+	usage := usageEntry{
+		AuthID:    "auth-a",
+		Provider:  "codex",
+		Primary:   usageWindow{UsedPercent: 10, ResetAt: now.Add(time.Hour), HasData: true},
+		Secondary: usageWindow{UsedPercent: 20, ResetAt: now.Add(24 * time.Hour), HasData: true},
+	}
+	if _, blocked := app.reconcileQuotaBlockFromUsage("auth-a", "window-a", app.cfg, []string{"gpt-5.4"}, usage, now, true); blocked {
+		t.Fatal("recovered usage should not remain blocked")
+	}
+	if _, _, blocked := app.state.quotaBlockInfo("auth-a", now); blocked {
+		t.Fatal("recovered usage should clear local quota block")
+	}
+}
+
+func TestReconcileQuotaBlockKeepsBlockOnUsageError(t *testing.T) {
+	now := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	until := now.Add(24 * time.Hour)
+	app := newTestUsageApp(t)
+	app.state.recordQuotaBlocked("auth-a", now.Add(-time.Minute), until, "周限额已满")
+
+	usage := usageEntry{AuthID: "auth-a", Provider: "codex", Err: "host_call_failed"}
+	record, blocked := app.reconcileQuotaBlockFromUsage("auth-a", "window-a", app.cfg, []string{"gpt-5.4"}, usage, now, true)
+	if !blocked {
+		t.Fatal("usage error should preserve active local quota block")
+	}
+	if !app.state.Auths["auth-a"].QuotaBlockedUntil.Equal(until) {
+		t.Fatalf("QuotaBlockedUntil = %v, want %v", app.state.Auths["auth-a"].QuotaBlockedUntil, until)
+	}
+	if record.Error == "" || app.state.Auths["auth-a"].LastAttempt == nil {
+		t.Fatal("usage error while locally blocked should record a skipped attempt")
+	}
+}
+
+func TestReconcileQuotaBlockUpdatesStillExhaustedUsage(t *testing.T) {
+	now := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	reset := now.Add(2 * time.Hour)
+	app := newTestUsageApp(t)
+
+	usage := usageEntry{
+		AuthID:    "auth-a",
+		Provider:  "codex",
+		Primary:   usageWindow{UsedPercent: 10, ResetAt: now.Add(time.Hour), HasData: true},
+		Secondary: usageWindow{UsedPercent: 100, ResetAt: reset, HasData: true},
+	}
+	record, blocked := app.reconcileQuotaBlockFromUsage("auth-a", "window-a", app.cfg, []string{"gpt-5.4"}, usage, now, true)
+	if !blocked {
+		t.Fatal("exhausted usage should block warmup")
+	}
+	until, reason, active := app.state.quotaBlockInfo("auth-a", now)
+	if !active || !until.Equal(reset) || reason != "周限额已满" {
+		t.Fatalf("quota block = %s/%q/%v, want %s/周限额已满/true", until, reason, active, reset)
+	}
+	if record.Error == "" || app.state.Auths["auth-a"].LastAttempt == nil {
+		t.Fatal("exhausted usage should record skipped attempt")
+	}
+}
+
+func newTestUsageApp(t *testing.T) *app {
+	t.Helper()
+	cfg, err := normalizeConfig(defaultPluginConfig())
+	if err != nil {
+		t.Fatalf("normalizeConfig returned error: %v", err)
+	}
+	cfg.StatePath = t.TempDir() + "/state.json"
+	return &app{cfg: cfg, state: newPluginState(), pending: map[string]uint64{}}
+}

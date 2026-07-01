@@ -344,6 +344,7 @@ func (a *app) pushUsage() error {
 		return fmt.Errorf("webhook 地址未配置")
 	}
 	entries := a.collectUsage()
+	a.reconcileQuotaBlocksFromUsageEntries(entries)
 	message := buildUsageMessage(entries)
 	return sendWebhook(webhook, message)
 }
@@ -398,6 +399,7 @@ type usageGroupView struct {
 
 func (a *app) usageSnapshot() usageSnapshotView {
 	entries := a.collectUsage()
+	a.reconcileQuotaBlocksFromUsageEntries(entries)
 	view := usageSnapshotView{
 		GeneratedAt: displayTime(time.Now(), "2006-01-02 15:04"),
 		Message:     buildUsageMessage(entries),
@@ -421,6 +423,18 @@ func (a *app) usageSnapshot() usageSnapshotView {
 		}
 	}
 	return view
+}
+
+func (a *app) reconcileQuotaBlocksFromUsageEntries(entries []usageEntry) {
+	cfg, _, _ := a.snapshot()
+	now := time.Now()
+	for _, entry := range entries {
+		if entry.AuthID == "" {
+			continue
+		}
+		models := warmupModelCandidates(cfg, entry.AuthID)
+		a.reconcileQuotaBlockFromUsage(entry.AuthID, "", cfg, models, entry, now, false)
+	}
 }
 
 func groupView(provider, label string, agg aggregateResult) usageGroupView {
