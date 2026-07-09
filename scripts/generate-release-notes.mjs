@@ -56,13 +56,13 @@ if (tests.length) {
 }
 lines.push("");
 lines.push("### 插件资产");
-lines.push(`- Windows: \`cpa-window-primer-${version}-windows-x64.dll\``);
-lines.push(`- Linux: \`cpa-window-primer-${version}-linux-x64.so\``);
-lines.push(`- macOS Intel: \`cpa-window-primer-${version}-macos-x64.dylib\``);
-lines.push(`- macOS Apple Silicon: \`cpa-window-primer-${version}-macos-arm64.dylib\``);
+lines.push(`- Windows: \`cpa-window-primer_${version}_windows_amd64.zip\``);
+lines.push(`- Linux: \`cpa-window-primer_${version}_linux_amd64.zip\``);
+lines.push(`- macOS Intel: \`cpa-window-primer_${version}_darwin_amd64.zip\``);
+lines.push(`- macOS Apple Silicon: \`cpa-window-primer_${version}_darwin_arm64.zip\``);
 lines.push("");
 lines.push("### 说明");
-lines.push("- 本 Release 由 GitHub Actions 自动编译并上传插件动态库。");
+lines.push("- 本 Release 由 GitHub Actions 自动编译并上传 CPA 插件 zip。");
 lines.push("- `latest.json` 会在所有平台资产上传后自动更新。");
 if (previousTag) {
   lines.push(`- 自动发布说明基于 \`${previousTag}...${tag}\` 的提交正文生成。`);

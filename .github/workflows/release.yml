@@ -47,6 +47,14 @@ jobs:
             goos: windows
             goarch: amd64
             ext: .dll
+          - runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
+            ext: .dylib
+          - runner: macos-14
+            goos: darwin
+            goarch: arm64
+            ext: .dylib
 
     steps:
       - uses: actions/checkout@v4
@@ -87,6 +95,10 @@ jobs:
 
       - name: Build plugin
         shell: pwsh
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "1"
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           go build -trimpath -buildmode=c-shared -ldflags "-s -w" -o "dist/$env:LIB_NAME" .
