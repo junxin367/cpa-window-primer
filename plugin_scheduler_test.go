@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
@@ -43,5 +45,21 @@ func TestPickAuthFromSchedulerHeadersMatchesCandidateAttributes(t *testing.T) {
 	})
 	if !ok || got != "auth-b" {
 		t.Fatalf("pickAuthFromSchedulerHeaders = %q/%v, want auth-b/true", got, ok)
+	}
+}
+
+func TestHandleSchedulerPickRejectsMissingPrimerTarget(t *testing.T) {
+	raw, err := json.Marshal(pluginapi.SchedulerPickRequest{
+		Options: pluginapi.SchedulerOptions{Headers: map[string][]string{
+			primerHeader: {"missing"},
+		}},
+		Candidates: []pluginapi.SchedulerAuthCandidate{{ID: "auth-a"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal scheduler request: %v", err)
+	}
+	_, err = handleSchedulerPick(raw)
+	if err == nil || !strings.Contains(err.Error(), "target_auth_not_candidate") {
+		t.Fatalf("handleSchedulerPick error = %v, want target_auth_not_candidate", err)
 	}
 }

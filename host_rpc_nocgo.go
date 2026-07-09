@@ -7,6 +7,8 @@ import (
 	"fmt"
 )
 
-func callHostRPC(method string, payload any) (json.RawMessage, error) {
+var callHostRPC = defaultCallHostRPC
+
+func defaultCallHostRPC(method string, payload any) (json.RawMessage, error) {
 	return nil, fmt.Errorf("host callback %s requires a cgo plugin build", method)
 }

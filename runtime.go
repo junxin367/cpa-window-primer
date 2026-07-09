@@ -252,6 +252,26 @@ func (a *app) recordWindowSkip(authID, windowKey, reason string, at time.Time, s
 
 func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCallbackID string, force bool) attemptRecord {
 	now := time.Now()
+	target, targetErr := resolveWarmupAuthTarget(authID)
+	if targetErr != nil {
+		record := attemptRecord{
+			At:        now,
+			WindowKey: windowKey,
+			Model:     cfg.Model,
+			Success:   false,
+			Error:     "auth_target_unavailable: " + targetErr.Error(),
+		}
+		a.mu.Lock()
+		a.state.recordAttempt(authID, record)
+		if err := saveState(cfg.StatePath, a.state); err != nil {
+			a.lastError = err.Error()
+		}
+		a.mu.Unlock()
+		return record
+	}
+	authID = target.AuthID
+	beforeTargetSuccess := target.Success
+
 	if !force {
 		a.mu.Lock()
 		if _, _, blocked := a.state.quotaBlockInfo(authID, now); blocked {
@@ -302,6 +322,8 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 		fallbacks  []string
 	)
 	for idx, model := range models {
+		targetNotUsed := false
+		targetVerifyFailed := false
 		resp, err = executeHostWarmup(authID, model, cfg.Prompt, hostCallbackID)
 		record = attemptRecord{
 			At:        now,
@@ -319,11 +341,22 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 			}
 		}
 		if record.Success {
+			if verifyErr := verifyWarmupTargetSuccess(target, beforeTargetSuccess); verifyErr != nil {
+				record.Success = false
+				record.Error = verifyErr.Error()
+				if strings.Contains(record.Error, "target_auth_not_used") {
+					targetNotUsed = true
+				} else {
+					targetVerifyFailed = true
+				}
+			}
+		}
+		if record.Success {
 			break
 		}
 		quotaBlocked := isWarmupQuotaBlocked(record.StatusCode, resp.Headers, resp.Body, err)
 		modelUnavailable := isWarmupModelUnavailable(record.StatusCode, resp.Body, err)
-		if quotaBlocked || !modelUnavailable || idx == len(models)-1 {
+		if quotaBlocked || targetVerifyFailed || (!modelUnavailable && !targetNotUsed) || idx == len(models)-1 {
 			break
 		}
 		fallbacks = append(fallbacks, fmt.Sprintf("%s: %s", model, warmupErrorText(record)))

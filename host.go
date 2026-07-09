@@ -38,6 +38,12 @@ type availableModel struct {
 	RawType string
 }
 
+type warmupAuthTarget struct {
+	AuthID    string
+	AuthIndex string
+	Success   int64
+}
+
 func callHostAuthList() ([]pluginapi.HostAuthFileEntry, error) {
 	result, err := callHostRPC(pluginabi.MethodHostAuthList, map[string]any{})
 	if err != nil {
@@ -132,6 +138,63 @@ func callHostAuthGetRuntime(authIndex string) (pluginapi.HostAuthGetRuntimeRespo
 		return pluginapi.HostAuthGetRuntimeResponse{}, fmt.Errorf("decode auth runtime: %w", err)
 	}
 	return resp, nil
+}
+
+func resolveWarmupAuthTarget(raw string) (warmupAuthTarget, error) {
+	target := strings.TrimSpace(raw)
+	if target == "" {
+		return warmupAuthTarget{}, fmt.Errorf("auth_id is required")
+	}
+	auths, err := callHostAuthList()
+	if err != nil {
+		return warmupAuthTarget{}, fmt.Errorf("list auths for warmup target: %w", err)
+	}
+	selected := map[string]bool{target: true}
+	for _, auth := range auths {
+		if !isManagedOAuthAuth(auth) || !authEntrySelected(selected, auth) {
+			continue
+		}
+		authID := authIDForEntry(auth)
+		if authID == "" {
+			return warmupAuthTarget{}, fmt.Errorf("auth_id is empty for warmup target %s", target)
+		}
+		authIndex := strings.TrimSpace(auth.AuthIndex)
+		if authIndex == "" {
+			return warmupAuthTarget{}, fmt.Errorf("auth_index is empty for warmup target %s", authID)
+		}
+		return warmupAuthTarget{AuthID: authID, AuthIndex: authIndex, Success: auth.Success}, nil
+	}
+	return warmupAuthTarget{}, fmt.Errorf("auth_id %s is not available for warmup", target)
+}
+
+func refreshWarmupAuthTarget(target warmupAuthTarget) (warmupAuthTarget, error) {
+	if strings.TrimSpace(target.AuthIndex) == "" {
+		return target, fmt.Errorf("auth_index is empty for warmup target %s", target.AuthID)
+	}
+	resp, err := callHostAuthGetRuntime(target.AuthIndex)
+	if err != nil {
+		return target, fmt.Errorf("get auth runtime for %s: %w", target.AuthID, err)
+	}
+	entry := resp.Auth
+	if authID := authIDForEntry(entry); authID != "" {
+		target.AuthID = authID
+	}
+	if authIndex := strings.TrimSpace(entry.AuthIndex); authIndex != "" {
+		target.AuthIndex = authIndex
+	}
+	target.Success = entry.Success
+	return target, nil
+}
+
+func verifyWarmupTargetSuccess(target warmupAuthTarget, beforeSuccess int64) error {
+	latest, err := refreshWarmupAuthTarget(target)
+	if err != nil {
+		return fmt.Errorf("target_auth_verify_failed: %w", err)
+	}
+	if latest.Success <= beforeSuccess {
+		return fmt.Errorf("target_auth_not_used: 目标认证文件 %s 的成功计数未增加", target.AuthID)
+	}
+	return nil
 }
 
 func isSupportedOAuthAuth(entry pluginapi.HostAuthFileEntry) bool {
@@ -440,6 +503,7 @@ func isWarmupModelUnavailable(statusCode int, body []byte, err error) bool {
 		"does not exist",
 		"not a valid model",
 		"no such model",
+		"target_auth_not_candidate",
 	} {
 		if strings.Contains(text, marker) {
 			return true

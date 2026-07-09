@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
@@ -12,9 +13,13 @@ func handleSchedulerPick(raw []byte) ([]byte, error) {
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, err
 	}
-	authID, ok := pickAuthFromSchedulerHeaders(req.Options.Headers, req.Candidates)
-	if !ok {
+	target := schedulerHeaderValue(req.Options.Headers, primerHeader)
+	if target == "" {
 		return okEnvelope(pluginapi.SchedulerPickResponse{Handled: false})
+	}
+	authID, ok := pickAuthFromSchedulerTarget(target, req.Candidates)
+	if !ok {
+		return nil, fmt.Errorf("target_auth_not_candidate: %s", target)
 	}
 	return okEnvelope(pluginapi.SchedulerPickResponse{Handled: true, AuthID: authID})
 }
@@ -24,6 +29,10 @@ func pickAuthFromSchedulerHeaders(headers map[string][]string, candidates []plug
 	if target == "" {
 		return "", false
 	}
+	return pickAuthFromSchedulerTarget(target, candidates)
+}
+
+func pickAuthFromSchedulerTarget(target string, candidates []pluginapi.SchedulerAuthCandidate) (string, bool) {
 	for _, candidate := range candidates {
 		candidateID := strings.TrimSpace(candidate.ID)
 		if candidateID != "" && schedulerCandidateMatches(candidate, target) {

@@ -116,7 +116,9 @@ func cliproxyPluginShutdown() {
 	globalApp.shutdown()
 }
 
-func callHostRPC(method string, payload any) (json.RawMessage, error) {
+var callHostRPC = defaultCallHostRPC
+
+func defaultCallHostRPC(method string, payload any) (json.RawMessage, error) {
 	rawPayload, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal host callback %s: %w", method, err)

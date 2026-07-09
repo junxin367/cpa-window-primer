@@ -785,6 +785,10 @@ func (a *app) renderStatusPage() []byte {
       }
       if (lower.includes('min_interval_not_met')) return '未到最小间隔';
       if (lower.includes('warmup_already_running')) return '正在预热';
+      if (lower.includes('target_auth_not_used')) return '宿主没有使用目标认证文件';
+      if (lower.includes('target_auth_not_candidate')) return '目标认证文件没有进入调度候选';
+      if (lower.includes('target_auth_verify_failed')) return '目标认证文件结果确认失败';
+      if (lower.includes('auth_target_unavailable')) return '目标认证文件不可用';
       if (lower.includes('need') && lower.includes('密钥')) return text;
       if (text.length > 48) return text.slice(0, 48) + '…';
       return text;
