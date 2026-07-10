@@ -129,7 +129,9 @@ jobs:
         run: |
           $version = "${{ needs.ensure-release.outputs.tag }}" -replace '^[vV]', ''
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          go build -buildmode=c-shared -o "dist/cpa-window-primer-$version-${{ matrix.platform }}.${{ matrix.ext }}" .
+          go build -trimpath -buildmode=c-shared -ldflags "-s -w" -o "dist/cpa-window-primer.dll" .
+          Move-Item -LiteralPath "dist/cpa-window-primer.dll" -Destination "dist/cpa-window-primer-$version-${{ matrix.platform }}.${{ matrix.ext }}"
+          Move-Item -LiteralPath "dist/cpa-window-primer.h" -Destination "dist/cpa-window-primer-$version-${{ matrix.platform }}.h"
 
       - name: Upload plugin asset
         env:
