@@ -246,15 +246,15 @@ func (a *app) managementSnapshot() managementSnapshot {
 			quotaBlockedUntil = &until
 		}
 		rows = append(rows, managementAuthView{
-			ID:                id,
-			AuthIndex:         auth.AuthIndex,
-			Name:              auth.Name,
-			Provider:          auth.Provider,
-			Status:            auth.Status,
-			StatusMessage:     auth.StatusMessage,
-			Email:             auth.Email,
-			Label:             auth.Label,
-			Source:            auth.Source,
+			ID:            id,
+			AuthIndex:     auth.AuthIndex,
+			Name:          auth.Name,
+			Provider:      auth.Provider,
+			Status:        auth.Status,
+			StatusMessage: auth.StatusMessage,
+			Email:         auth.Email,
+			Label:         auth.Label,
+			Source:        auth.Source,
 			// 仅“手动禁用”的认证文件不可勾选；无额度/限流只会让后台定时任务跳过，
 			// 不影响在管理页继续勾选、保存与手动预热。
 			Selectable:        !auth.Disabled,
@@ -789,6 +789,14 @@ func (a *app) renderStatusPage() []byte {
       if (lower.includes('target_auth_not_candidate')) return '目标认证文件没有进入调度候选';
       if (lower.includes('target_auth_verify_failed')) return '目标认证文件结果确认失败';
       if (lower.includes('auth_target_unavailable')) return '目标认证文件不可用';
+      if (lower.includes('codex_warmup_stream_incomplete')) return '目标认证请求未返回完成事件';
+      if (lower.includes('codex_warmup_stream_error')) return '目标认证请求返回失败';
+      if (lower.includes('codex_warmup_timeout')) return '目标认证请求超时';
+      if (lower.includes('codex_warmup_response_too_large')) return '目标认证响应过大';
+      if (lower.includes('codex_warmup_stream_unavailable')) return '宿主流式请求不可用';
+      if (lower.includes('target_auth_proxy_invalid')) return '目标认证文件的代理配置无效';
+      if (lower.includes('codex_warmup_request_failed')) return '目标认证直连请求失败';
+      if (lower.includes('access token not found')) return '目标认证文件缺少 Access Token';
       if (lower.includes('need') && lower.includes('密钥')) return text;
       if (text.length > 48) return text.slice(0, 48) + '…';
       return text;

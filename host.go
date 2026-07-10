@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -10,6 +14,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
 )
 
 type authListResponse struct {
@@ -41,8 +46,53 @@ type availableModel struct {
 type warmupAuthTarget struct {
 	AuthID    string
 	AuthIndex string
+	Provider  string
 	Success   int64
 }
+
+type codexWarmupRequest struct {
+	Model        string               `json:"model"`
+	Instructions string               `json:"instructions"`
+	Input        []codexWarmupInput   `json:"input"`
+	Stream       bool                 `json:"stream"`
+	Store        bool                 `json:"store"`
+	Reasoning    codexWarmupReasoning `json:"reasoning"`
+	Include      []string             `json:"include"`
+}
+
+type codexWarmupInput struct {
+	Type    string               `json:"type"`
+	Role    string               `json:"role"`
+	Content []codexWarmupContent `json:"content"`
+}
+
+type codexWarmupContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type codexWarmupReasoning struct {
+	Effort  string `json:"effort"`
+	Summary string `json:"summary"`
+}
+
+type codexWarmupEvent struct {
+	Type     string `json:"type"`
+	Status   string `json:"status"`
+	Error    any    `json:"error"`
+	Response struct {
+		Status string `json:"status"`
+		Error  any    `json:"error"`
+	} `json:"response"`
+}
+
+const (
+	codexWarmupURL              = "https://chatgpt.com/backend-api/codex/responses"
+	codexWarmupUserAgent        = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
+	codexWarmupOrigin           = "codex-tui"
+	codexWarmupTimeout          = 2 * time.Minute
+	codexWarmupMaxResponseBytes = 1 << 20
+)
 
 func callHostAuthList() ([]pluginapi.HostAuthFileEntry, error) {
 	result, err := callHostRPC(pluginabi.MethodHostAuthList, map[string]any{})
@@ -149,22 +199,42 @@ func resolveWarmupAuthTarget(raw string) (warmupAuthTarget, error) {
 	if err != nil {
 		return warmupAuthTarget{}, fmt.Errorf("list auths for warmup target: %w", err)
 	}
-	selected := map[string]bool{target: true}
+	nameMatches := make([]pluginapi.HostAuthFileEntry, 0, 1)
 	for _, auth := range auths {
-		if !isManagedOAuthAuth(auth) || !authEntrySelected(selected, auth) {
+		if !isManagedOAuthAuth(auth) {
 			continue
 		}
-		authID := authIDForEntry(auth)
-		if authID == "" {
-			return warmupAuthTarget{}, fmt.Errorf("auth_id is empty for warmup target %s", target)
+		if target == authIDForEntry(auth) || target == strings.TrimSpace(auth.AuthIndex) {
+			return warmupAuthTargetFromEntry(auth, target)
 		}
-		authIndex := strings.TrimSpace(auth.AuthIndex)
-		if authIndex == "" {
-			return warmupAuthTarget{}, fmt.Errorf("auth_index is empty for warmup target %s", authID)
+		if target == strings.TrimSpace(auth.Name) {
+			nameMatches = append(nameMatches, auth)
 		}
-		return warmupAuthTarget{AuthID: authID, AuthIndex: authIndex, Success: auth.Success}, nil
+	}
+	if len(nameMatches) == 1 {
+		return warmupAuthTargetFromEntry(nameMatches[0], target)
+	}
+	if len(nameMatches) > 1 {
+		return warmupAuthTarget{}, fmt.Errorf("auth name %s is ambiguous; use auth_id or auth_index", target)
 	}
 	return warmupAuthTarget{}, fmt.Errorf("auth_id %s is not available for warmup", target)
+}
+
+func warmupAuthTargetFromEntry(auth pluginapi.HostAuthFileEntry, requested string) (warmupAuthTarget, error) {
+	authID := authIDForEntry(auth)
+	if authID == "" {
+		return warmupAuthTarget{}, fmt.Errorf("auth_id is empty for warmup target %s", requested)
+	}
+	authIndex := strings.TrimSpace(auth.AuthIndex)
+	if authIndex == "" {
+		return warmupAuthTarget{}, fmt.Errorf("auth_index is empty for warmup target %s", authID)
+	}
+	return warmupAuthTarget{
+		AuthID:    authID,
+		AuthIndex: authIndex,
+		Provider:  classifyProvider(auth.Provider, auth.Type),
+		Success:   auth.Success,
+	}, nil
 }
 
 func refreshWarmupAuthTarget(target warmupAuthTarget) (warmupAuthTarget, error) {
@@ -195,6 +265,284 @@ func verifyWarmupTargetSuccess(target warmupAuthTarget, beforeSuccess int64) err
 		return fmt.Errorf("target_auth_not_used: 目标认证文件 %s 的成功计数未增加", target.AuthID)
 	}
 	return nil
+}
+
+func isTargetAuthNotCandidate(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "target_auth_not_candidate")
+}
+
+func executeCodexDirectWarmup(target warmupAuthTarget, model, prompt, hostCallbackID string) (pluginapi.HostModelExecutionResponse, error) {
+	credentials, err := codexCredentialsForAuth(target.AuthIndex)
+	if err != nil {
+		return pluginapi.HostModelExecutionResponse{}, fmt.Errorf("load target auth %s credentials: %w", target.AuthID, err)
+	}
+	body, err := json.Marshal(codexWarmupRequest{
+		Model:        model,
+		Instructions: "",
+		Input: []codexWarmupInput{{
+			Type: "message",
+			Role: "user",
+			Content: []codexWarmupContent{{
+				Type: "input_text",
+				Text: prompt,
+			}},
+		}},
+		Stream: true,
+		Store:  false,
+		Reasoning: codexWarmupReasoning{
+			Effort:  "medium",
+			Summary: "auto",
+		},
+		Include: []string{"reasoning.encrypted_content"},
+	})
+	if err != nil {
+		return pluginapi.HostModelExecutionResponse{}, fmt.Errorf("encode codex warmup request: %w", err)
+	}
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer "+credentials.AccessToken)
+	headers.Set("Content-Type", "application/json")
+	headers.Set("Accept", "text/event-stream")
+	headers.Set("Connection", "Keep-Alive")
+	headers.Set("User-Agent", codexWarmupUserAgent)
+	headers.Set("Originator", codexWarmupOrigin)
+	headers.Set("Session_id", codexWarmupSessionID())
+	if credentials.AccountID != "" {
+		headers.Set("Chatgpt-Account-Id", credentials.AccountID)
+	}
+	resp, requestErr := executeCodexWarmupHTTP(credentials, codexWarmupURL, headers, body, hostCallbackID)
+	result := pluginapi.HostModelExecutionResponse{
+		StatusCode: resp.StatusCode,
+		Headers:    resp.Headers,
+		Body:       resp.Body,
+	}
+	if requestErr != nil {
+		return result, fmt.Errorf("codex_warmup_request_failed: %w", requestErr)
+	}
+	if result.StatusCode >= http.StatusOK && result.StatusCode < http.StatusMultipleChoices {
+		if err := validateCodexWarmupCompletion(result.Body); err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
+func executeCodexWarmupHTTP(credentials codexAuthCredentials, rawURL string, headers http.Header, body []byte, hostCallbackID string) (pluginapi.HTTPResponse, error) {
+	proxyURL := strings.TrimSpace(credentials.ProxyURL)
+	if proxyURL == "" {
+		return executeCodexWarmupHostHTTP(rawURL, headers, body, hostCallbackID)
+	}
+
+	transport, _, err := proxyutil.BuildHTTPTransport(proxyURL)
+	if err != nil {
+		return pluginapi.HTTPResponse{}, fmt.Errorf("target_auth_proxy_invalid: %w", err)
+	}
+	if transport == nil {
+		return pluginapi.HTTPResponse{}, fmt.Errorf("target_auth_proxy_invalid: no transport")
+	}
+	defer transport.CloseIdleConnections()
+
+	req, err := http.NewRequest(http.MethodPost, rawURL, bytes.NewReader(body))
+	if err != nil {
+		return pluginapi.HTTPResponse{}, fmt.Errorf("create direct Codex request: %w", err)
+	}
+	req.Header = headers.Clone()
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   codexWarmupTimeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return pluginapi.HTTPResponse{}, fmt.Errorf("execute direct Codex request: %w", err)
+	}
+	defer resp.Body.Close()
+	result := pluginapi.HTTPResponse{
+		StatusCode: resp.StatusCode,
+		Headers:    resp.Header.Clone(),
+	}
+	buffer := make([]byte, 32*1024)
+	for {
+		n, readErr := resp.Body.Read(buffer)
+		if n > 0 {
+			if len(result.Body)+n > codexWarmupMaxResponseBytes {
+				return result, fmt.Errorf("codex_warmup_response_too_large")
+			}
+			result.Body = append(result.Body, buffer[:n]...)
+			if codexWarmupResponseTerminal(result.Body) {
+				return result, nil
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				return result, nil
+			}
+			return result, fmt.Errorf("read direct Codex response: %w", readErr)
+		}
+	}
+}
+
+func executeCodexWarmupHostHTTP(rawURL string, headers http.Header, body []byte, hostCallbackID string) (pluginapi.HTTPResponse, error) {
+	return executeCodexWarmupHostHTTPWithTimeout(rawURL, headers, body, hostCallbackID, codexWarmupTimeout)
+}
+
+func executeCodexWarmupHostHTTPWithTimeout(rawURL string, headers http.Header, body []byte, hostCallbackID string, timeout time.Duration) (pluginapi.HTTPResponse, error) {
+	type openResult struct {
+		Response rpcHTTPStreamResponse
+		Err      error
+	}
+	type readResult struct {
+		Response rpcHTTPStreamReadResponse
+		Err      error
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	done := make(chan struct{})
+	defer close(done)
+
+	openCh := make(chan openResult)
+	go func() {
+		resp, err := callHostHTTPDoStream(http.MethodPost, rawURL, headers, body, hostCallbackID)
+		result := openResult{Response: resp, Err: err}
+		select {
+		case openCh <- result:
+		case <-done:
+			if err == nil && strings.TrimSpace(resp.StreamID) != "" {
+				_ = callHostHTTPStreamClose(resp.StreamID)
+			}
+		}
+	}()
+
+	var stream rpcHTTPStreamResponse
+	select {
+	case opened := <-openCh:
+		if opened.Err != nil {
+			return pluginapi.HTTPResponse{}, opened.Err
+		}
+		stream = opened.Response
+	case <-timer.C:
+		return pluginapi.HTTPResponse{}, fmt.Errorf("codex_warmup_timeout: waiting for response headers")
+	}
+	if strings.TrimSpace(stream.StreamID) == "" {
+		return pluginapi.HTTPResponse{}, fmt.Errorf("codex_warmup_stream_unavailable")
+	}
+
+	streamClosed := false
+	closeStream := func() {
+		if streamClosed {
+			return
+		}
+		streamClosed = true
+		_ = callHostHTTPStreamClose(stream.StreamID)
+	}
+	defer closeStream()
+
+	result := pluginapi.HTTPResponse{
+		StatusCode: stream.StatusCode,
+		Headers:    stream.Headers.Clone(),
+	}
+	for {
+		readCh := make(chan readResult)
+		go func() {
+			resp, err := callHostHTTPStreamRead(stream.StreamID)
+			select {
+			case readCh <- readResult{Response: resp, Err: err}:
+			case <-done:
+			}
+		}()
+
+		select {
+		case chunk := <-readCh:
+			if chunk.Err != nil {
+				return result, chunk.Err
+			}
+			if len(chunk.Response.Payload) > 0 {
+				if len(result.Body)+len(chunk.Response.Payload) > codexWarmupMaxResponseBytes {
+					return result, fmt.Errorf("codex_warmup_response_too_large")
+				}
+				result.Body = append(result.Body, chunk.Response.Payload...)
+				if codexWarmupResponseTerminal(result.Body) {
+					return result, nil
+				}
+			}
+			if chunk.Response.Done {
+				return result, nil
+			}
+		case <-timer.C:
+			closeStream()
+			return result, fmt.Errorf("codex_warmup_timeout: waiting for response completion")
+		}
+	}
+}
+
+func codexWarmupSessionID() string {
+	raw := make([]byte, 16)
+	if _, err := cryptorand.Read(raw); err != nil {
+		return fmt.Sprintf("cwp-%d", time.Now().UnixNano())
+	}
+	raw[6] = (raw[6] & 0x0f) | 0x40
+	raw[8] = (raw[8] & 0x3f) | 0x80
+	text := hex.EncodeToString(raw)
+	return text[:8] + "-" + text[8:12] + "-" + text[12:16] + "-" + text[16:20] + "-" + text[20:]
+}
+
+func validateCodexWarmupCompletion(body []byte) error {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return fmt.Errorf("codex_warmup_stream_incomplete: empty response")
+	}
+	completed, terminalErr := inspectCodexWarmupCompletion(trimmed)
+	if terminalErr != nil {
+		return terminalErr
+	}
+	if completed {
+		return nil
+	}
+	return fmt.Errorf("codex_warmup_stream_incomplete")
+}
+
+func codexWarmupResponseTerminal(body []byte) bool {
+	completed, terminalErr := inspectCodexWarmupCompletion(body)
+	return completed || terminalErr != nil
+}
+
+func inspectCodexWarmupCompletion(body []byte) (bool, error) {
+	trimmed := bytes.TrimSpace(body)
+	for _, line := range bytes.Split(trimmed, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		eventData := bytes.TrimSpace(line[len("data:"):])
+		if bytes.Equal(eventData, []byte("[DONE]")) {
+			continue
+		}
+		var event codexWarmupEvent
+		if err := json.Unmarshal(eventData, &event); err != nil {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(event.Type)) {
+		case "response.completed":
+			return true, nil
+		case "error", "response.failed", "response.incomplete":
+			return false, fmt.Errorf("codex_warmup_stream_error: %s", summarizeResponse(eventData))
+		}
+	}
+
+	var result codexWarmupEvent
+	if err := json.Unmarshal(trimmed, &result); err == nil {
+		eventType := strings.ToLower(strings.TrimSpace(result.Type))
+		if eventType == "response.completed" {
+			return true, nil
+		}
+		if eventType == "error" || eventType == "response.failed" || eventType == "response.incomplete" ||
+			result.Error != nil || result.Response.Error != nil {
+			return false, fmt.Errorf("codex_warmup_stream_error: %s", summarizeResponse(trimmed))
+		}
+	}
+	return false, nil
 }
 
 func isSupportedOAuthAuth(entry pluginapi.HostAuthFileEntry) bool {
@@ -240,18 +588,48 @@ func isHostAuthQuotaBlocked(entry pluginapi.HostAuthFileEntry, now time.Time) bo
 	return quotaLikeText(entry.Status + " " + entry.StatusMessage)
 }
 
-func isWarmupQuotaBlocked(statusCode int, headers http.Header, body []byte, err error) bool {
+func isWarmupQuotaBlocked(provider string, statusCode int, headers http.Header, body []byte, err error) bool {
+	text := string(body)
+	if err != nil {
+		text += " " + err.Error()
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "codex") {
+		if statusCode == http.StatusPaymentRequired {
+			return true
+		}
+		return usageQuotaLikeText(text)
+	}
 	if statusCode == http.StatusPaymentRequired || statusCode == http.StatusTooManyRequests {
 		return true
 	}
 	if statusCode == http.StatusServiceUnavailable && headers != nil && strings.TrimSpace(headers.Get("Retry-After")) != "" {
 		return true
 	}
-	text := string(body)
-	if err != nil {
-		text += " " + err.Error()
-	}
 	return quotaLikeText(text)
+}
+
+func usageQuotaLikeText(text string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(text))
+	if normalized == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"usage_limit_reached",
+		"usage limit reached",
+		"insufficient_quota",
+		"quota exhausted",
+		"quota exceeded",
+		"credit exhausted",
+		"credits exhausted",
+		"no credit",
+		"no credits",
+		"payment required",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func quotaLikeText(text string) bool {
@@ -487,12 +865,16 @@ func stringValue(value any) string {
 }
 
 func isWarmupModelUnavailable(statusCode int, body []byte, err error) bool {
-	if statusCode != 0 && statusCode != http.StatusBadRequest && statusCode != http.StatusNotFound {
-		return false
-	}
 	text := strings.ToLower(strings.TrimSpace(string(body)))
 	if err != nil {
 		text += " " + strings.ToLower(err.Error())
+	}
+	if strings.Contains(text, "selected model is at capacity") ||
+		strings.Contains(text, "model is at capacity. please try a different model") {
+		return true
+	}
+	if statusCode != 0 && statusCode != http.StatusBadRequest && statusCode != http.StatusNotFound {
+		return false
 	}
 	for _, marker := range []string{
 		"model_not_found",

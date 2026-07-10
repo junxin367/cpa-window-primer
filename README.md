@@ -107,3 +107,7 @@ POST /v0/management/cpa-window-primer/usage-push
 ```
 
 `force=false` 会遵守 5 小时最小间隔。管理页的单个/批量手动预热会使用 `force=true`，用于确认指定认证文件能否立刻打通；手动预热成功不会更新后台定时使用的 `last_success_at`，因此不会打乱 07:00 / 12:00 / 17:00 等定时窗口。
+
+Codex 预热默认通过宿主模型执行路径，并在调度阶段指定目标认证文件。如果 CLIProxyAPI 因优先级或当前模型状态未把目标认证放入候选列表，插件会通过 `host.auth.get` 读取该认证文件自身的 OAuth 凭据，再定向请求固定的 ChatGPT Codex Responses API。未配置认证专属代理时，请求使用宿主流式 HTTP 回调以继承宿主全局代理；配置了 `proxy_url` 或 `direct` 时，兜底请求会严格使用该认证自己的网络出口策略。兜底请求最多等待两分钟，并在收到 `response.completed` 后立即关闭流。只有目标请求返回该完成事件才会记为成功，不会回退到其他认证文件冒充成功。
+
+受当前宿主回调接口限制，定向兜底依赖 CLIProxyAPI 已持久化的最新 OAuth Token；结果会按目标 `auth_id` 写入插件状态，但不会增加宿主管理页中的该认证 `Success` / `Failed` 计数。

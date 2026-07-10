@@ -43,10 +43,37 @@ type usageQuotaBlock struct {
 
 // rpcHTTPRequest 是 host.http.do 的请求包裹结构。
 type rpcHTTPRequest struct {
-	Method  string      `json:"method,omitempty"`
-	URL     string      `json:"url,omitempty"`
-	Headers http.Header `json:"headers,omitempty"`
-	Body    []byte      `json:"body,omitempty"`
+	HostCallbackID string      `json:"host_callback_id,omitempty"`
+	Method         string      `json:"method,omitempty"`
+	URL            string      `json:"url,omitempty"`
+	Headers        http.Header `json:"headers,omitempty"`
+	Body           []byte      `json:"body,omitempty"`
+}
+
+type rpcHTTPStreamResponse struct {
+	StatusCode int         `json:"status_code"`
+	Headers    http.Header `json:"headers,omitempty"`
+	StreamID   string      `json:"stream_id,omitempty"`
+}
+
+type rpcHTTPStreamReadRequest struct {
+	StreamID string `json:"stream_id"`
+}
+
+type rpcHTTPStreamReadResponse struct {
+	Payload []byte `json:"payload,omitempty"`
+	Error   string `json:"error,omitempty"`
+	Done    bool   `json:"done,omitempty"`
+}
+
+type rpcHTTPStreamCloseRequest struct {
+	StreamID string `json:"stream_id"`
+}
+
+type codexAuthCredentials struct {
+	AccessToken string
+	AccountID   string
+	ProxyURL    string
 }
 
 func callHostHTTPDo(method, rawURL string, headers http.Header, body []byte) (pluginapi.HTTPResponse, error) {
@@ -66,19 +93,69 @@ func callHostHTTPDo(method, rawURL string, headers http.Header, body []byte) (pl
 	return resp, nil
 }
 
-// accessTokenForAuth 通过 host.auth.get 拿物理 JSON 并提取 access token。
-func accessTokenForAuth(authIndex string) (string, error) {
+func callHostHTTPDoStream(method, rawURL string, headers http.Header, body []byte, hostCallbackID string) (rpcHTTPStreamResponse, error) {
+	result, err := callHostRPC(pluginabi.MethodHostHTTPDoStream, rpcHTTPRequest{
+		HostCallbackID: hostCallbackID,
+		Method:         method,
+		URL:            rawURL,
+		Headers:        headers,
+		Body:           body,
+	})
+	if err != nil {
+		return rpcHTTPStreamResponse{}, err
+	}
+	var resp rpcHTTPStreamResponse
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return rpcHTTPStreamResponse{}, fmt.Errorf("decode host http stream response: %w", err)
+	}
+	return resp, nil
+}
+
+func callHostHTTPStreamRead(streamID string) (rpcHTTPStreamReadResponse, error) {
+	result, err := callHostRPC(pluginabi.MethodHostHTTPStreamRead, rpcHTTPStreamReadRequest{StreamID: streamID})
+	if err != nil {
+		return rpcHTTPStreamReadResponse{}, err
+	}
+	var resp rpcHTTPStreamReadResponse
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return rpcHTTPStreamReadResponse{}, fmt.Errorf("decode host http stream chunk: %w", err)
+	}
+	if strings.TrimSpace(resp.Error) != "" {
+		return resp, fmt.Errorf("%s", resp.Error)
+	}
+	return resp, nil
+}
+
+func callHostHTTPStreamClose(streamID string) error {
+	_, err := callHostRPC(pluginabi.MethodHostHTTPStreamClose, rpcHTTPStreamCloseRequest{StreamID: streamID})
+	return err
+}
+
+// authDocumentForAuth 通过 host.auth.get 读取认证文件 JSON。
+func authDocumentForAuth(authIndex string) (map[string]any, error) {
 	result, err := callHostRPC(pluginabi.MethodHostAuthGet, pluginapi.HostAuthGetRequest{AuthIndex: authIndex})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var resp pluginapi.HostAuthGetResponse
 	if err := json.Unmarshal(result, &resp); err != nil {
-		return "", fmt.Errorf("decode auth json: %w", err)
+		return nil, fmt.Errorf("decode auth json: %w", err)
 	}
 	var doc map[string]any
-	if len(resp.JSON) > 0 {
-		_ = json.Unmarshal(resp.JSON, &doc)
+	if len(resp.JSON) == 0 {
+		return nil, fmt.Errorf("auth json is empty")
+	}
+	if err := json.Unmarshal(resp.JSON, &doc); err != nil {
+		return nil, fmt.Errorf("decode auth document: %w", err)
+	}
+	return doc, nil
+}
+
+// accessTokenForAuth 通过 host.auth.get 拿物理 JSON 并提取 access token。
+func accessTokenForAuth(authIndex string) (string, error) {
+	doc, err := authDocumentForAuth(authIndex)
+	if err != nil {
+		return "", err
 	}
 	token := extractAccessToken(doc)
 	if token == "" {
@@ -87,21 +164,53 @@ func accessTokenForAuth(authIndex string) (string, error) {
 	return token, nil
 }
 
+func codexCredentialsForAuth(authIndex string) (codexAuthCredentials, error) {
+	doc, err := authDocumentForAuth(authIndex)
+	if err != nil {
+		return codexAuthCredentials{}, err
+	}
+	token := extractAccessToken(doc)
+	if token == "" {
+		return codexAuthCredentials{}, fmt.Errorf("access token not found")
+	}
+	return codexAuthCredentials{
+		AccessToken: token,
+		AccountID:   extractAccountID(doc),
+		ProxyURL:    extractTopLevelAuthString(doc, "proxy_url", "proxyUrl"),
+	}, nil
+}
+
 // extractAccessToken 在常见路径里查找 access token。
 func extractAccessToken(doc map[string]any) string {
+	return extractAuthString(doc, "access_token", "accessToken")
+}
+
+func extractAccountID(doc map[string]any) string {
+	return extractAuthString(doc, "account_id", "accountId")
+}
+
+func extractTopLevelAuthString(doc map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := doc[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func extractAuthString(doc map[string]any, keys ...string) string {
 	if doc == nil {
 		return ""
 	}
-	candidates := []string{"access_token", "accessToken"}
-	for _, key := range candidates {
+	for _, key := range keys {
 		if v, ok := doc[key].(string); ok && strings.TrimSpace(v) != "" {
 			return strings.TrimSpace(v)
 		}
 	}
-	// 嵌套 metadata / tokens / token 容器。
-	for _, container := range []string{"metadata", "tokens", "token"} {
+	// 常见 OAuth 认证文件会把凭据嵌套在这些容器中。
+	for _, container := range []string{"metadata", "tokens", "token", "token_data", "auth", "credentials"} {
 		if sub, ok := doc[container].(map[string]any); ok {
-			if v := extractAccessToken(sub); v != "" {
+			if v := extractAuthString(sub, keys...); v != "" {
 				return v
 			}
 		}

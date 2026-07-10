@@ -316,31 +316,39 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 		models = []string{defaultFirstModel()}
 	}
 	var (
-		resp       pluginapi.HostModelExecutionResponse
-		err        error
-		record     attemptRecord
-		fallbacks  []string
+		resp      pluginapi.HostModelExecutionResponse
+		err       error
+		record    attemptRecord
+		fallbacks []string
 	)
 	for idx, model := range models {
+		usedDirectCodex := false
 		targetNotUsed := false
 		targetVerifyFailed := false
 		resp, err = executeHostWarmup(authID, model, cfg.Prompt, hostCallbackID)
+		if isTargetAuthNotCandidate(err) && target.Provider == "codex" {
+			// scheduler 只暴露最高优先级候选，改用目标 OAuth token 直连。
+			resp, err = executeCodexDirectWarmup(target, model, cfg.Prompt, hostCallbackID)
+			usedDirectCodex = true
+		}
 		record = attemptRecord{
 			At:        now,
 			WindowKey: windowKey,
 			Model:     model,
 		}
+		if resp.StatusCode != 0 {
+			record.StatusCode = resp.StatusCode
+			record.ResponseSummary = summarizeResponse(resp.Body)
+		}
 		if err != nil {
 			record.Error = err.Error()
 		} else {
-			record.StatusCode = resp.StatusCode
-			record.ResponseSummary = summarizeResponse(resp.Body)
 			record.Success = resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
 			if !record.Success {
 				record.Error = fmt.Sprintf("status %d", resp.StatusCode)
 			}
 		}
-		if record.Success {
+		if record.Success && !usedDirectCodex {
 			if verifyErr := verifyWarmupTargetSuccess(target, beforeTargetSuccess); verifyErr != nil {
 				record.Success = false
 				record.Error = verifyErr.Error()
@@ -354,7 +362,7 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 		if record.Success {
 			break
 		}
-		quotaBlocked := isWarmupQuotaBlocked(record.StatusCode, resp.Headers, resp.Body, err)
+		quotaBlocked := isWarmupQuotaBlocked(target.Provider, record.StatusCode, resp.Headers, resp.Body, err)
 		modelUnavailable := isWarmupModelUnavailable(record.StatusCode, resp.Body, err)
 		if quotaBlocked || targetVerifyFailed || (!modelUnavailable && !targetNotUsed) || idx == len(models)-1 {
 			break
@@ -368,7 +376,7 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 			record.Error = strings.TrimSpace(record.Error) + "; 模型兜底记录: " + strings.Join(fallbacks, " | ")
 		}
 	}
-	quotaBlocked := !record.Success && isWarmupQuotaBlocked(record.StatusCode, resp.Headers, resp.Body, err)
+	quotaBlocked := !record.Success && isWarmupQuotaBlocked(target.Provider, record.StatusCode, resp.Headers, resp.Body, err)
 	quotaUntil := time.Time{}
 	if quotaBlocked {
 		quotaUntil = warmupQuotaBlockUntil(resp.Headers, cfg.MinDuration, now)
