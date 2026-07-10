@@ -113,6 +113,7 @@ jobs:
         run: go test ./...
 
       - name: Build plugin asset
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
@@ -121,6 +122,14 @@ jobs:
           VERSION="${VERSION#V}"
           mkdir -p dist
           go build -buildmode=c-shared -o "dist/cpa-window-primer-${VERSION}-${{ matrix.platform }}.${{ matrix.ext }}" .
+
+      - name: Build plugin asset on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ needs.ensure-release.outputs.tag }}" -replace '^[vV]', ''
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          go build -buildmode=c-shared -o "dist/cpa-window-primer-$version-${{ matrix.platform }}.${{ matrix.ext }}" .
 
       - name: Upload plugin asset
         env:
