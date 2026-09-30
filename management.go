@@ -139,7 +139,7 @@ func (a *app) handleManualRun(req managementRequest) ([]byte, error) {
 	}
 	if len(req.Body) > 0 {
 		if err := json.Unmarshal(req.Body, &body); err != nil {
-			return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{"error": err.Error()}))
+			return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{"error": err.Error(), "msg": "预热失败：请求参数格式不正确，请刷新页面后重试。"}))
 		}
 	}
 	if body.AuthID == "" && req.Query != nil {
@@ -148,26 +148,27 @@ func (a *app) handleManualRun(req managementRequest) ([]byte, error) {
 	}
 	body.AuthID = strings.TrimSpace(body.AuthID)
 	if body.AuthID == "" {
-		return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{"error": "auth_id is required"}))
+		return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{"error": "auth_id is required", "msg": "请选择需要预热的认证文件。"}))
 	}
 	cfg, _, _ := a.snapshot()
 	authID, err := normalizeWarmupAuthID(body.AuthID)
 	if err != nil {
 		if !body.Force {
-			return okEnvelope(jsonResponse(http.StatusBadGateway, map[string]string{"error": err.Error()}))
+			return okEnvelope(jsonResponse(http.StatusBadGateway, map[string]string{"error": err.Error(), "msg": "预热失败：无法读取 CPA 认证文件，请检查服务连接后重试。"}))
 		}
 		authID = body.AuthID
 	}
 	if !body.Force {
 		allowed, err := schedulableAuthIDs()
 		if err != nil {
-			return okEnvelope(jsonResponse(http.StatusBadGateway, map[string]string{"error": err.Error()}))
+			return okEnvelope(jsonResponse(http.StatusBadGateway, map[string]string{"error": err.Error(), "msg": "预热失败：无法读取 CPA 认证文件，请检查服务连接后重试。"}))
 		}
 		if _, ok := allowed[authID]; !ok {
-			return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{"error": "auth_id is not available for warmup"}))
+			return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{"error": "auth_id is not available for warmup", "msg": "预热失败：所选认证文件不存在或已禁用，请重新选择可用的认证文件。"}))
 		}
 	}
 	record := a.executeWarmup(authID, "manual-"+time.Now().Format("20060102T150405"), cfg, req.HostCallbackID, body.Force)
+	record.Msg = warmupMessage(record)
 	status := http.StatusOK
 	if !record.Success {
 		status = http.StatusBadGateway
@@ -217,6 +218,7 @@ func jsonResponse(statusCode int, value any) managementResponse {
 }
 
 func (a *app) managementSnapshot() managementSnapshot {
+	a.recheckQuotaBlocks(time.Now())
 	cfg, state, lastErr := a.snapshot()
 	auths, err := callHostAuthList()
 	if err != nil {
@@ -232,11 +234,22 @@ func (a *app) managementSnapshot() managementSnapshot {
 		if id == "" {
 			continue
 		}
+		// 刚查询到的额度结果优先于宿主尚未清理的额度冷却缓存。
+		// 禁用、认证失败等非额度错误仍由宿主决定。
+		item := state.Auths[id]
+		if !auth.Disabled && state.quotaRecentlyAvailable(id, now) &&
+			!item.QuotaCheckedAt.Before(auth.UpdatedAt) &&
+			(quotaLikeText(auth.StatusMessage) || (strings.TrimSpace(auth.StatusMessage) == "" && auth.NextRetryAfter.After(now))) {
+			auth.NextRetryAfter = time.Time{}
+			auth.Unavailable = false
+			auth.Status = "active"
+			auth.StatusMessage = ""
+		}
 		hostBlocked := isHostAuthQuotaBlocked(auth, now)
 		quotaUntil, quotaReason, quotaBlocked := state.quotaBlockInfo(id, now)
 		blockedReason := authBlockedReason(auth, hostBlocked, quotaBlocked, quotaReason)
 		var nextRetryAfter *time.Time
-		if !auth.NextRetryAfter.IsZero() {
+		if auth.NextRetryAfter.After(now) {
 			next := auth.NextRetryAfter
 			nextRetryAfter = &next
 		}
@@ -288,7 +301,7 @@ func authBlockedReason(auth pluginapi.HostAuthFileEntry, hostBlocked, quotaBlock
 		}
 		return "无额度或限流中"
 	}
-	if !auth.NextRetryAfter.IsZero() {
+	if auth.NextRetryAfter.After(time.Now()) {
 		return "认证文件冷却中"
 	}
 	if auth.Unavailable {
@@ -309,7 +322,7 @@ func authBlockedReason(auth pluginapi.HostAuthFileEntry, hostBlocked, quotaBlock
 func (a *app) renderStatusPage() []byte {
 	rawData, err := json.Marshal(a.managementSnapshot())
 	if err != nil {
-		rawData = []byte(`{"config":{"enabled":true,"auth_ids":[],"times":["07:00","12:00","17:00"],"model":"gpt-5.4, claude-sonnet-4-6","prompt":"hi","min_interval":"5h","lead_time":"1m","tick_interval":"5s"},"auths":[],"state":{"auths":{}}}`)
+		rawData = []byte(`{"config":{"enabled":true,"auth_ids":[],"times":["07:00","12:00","17:00"],"model":"gpt-6-luna, claude-sonnet-4-6","prompt":"hi","min_interval":"5h","lead_time":"1m","tick_interval":"5s"},"auths":[],"state":{"auths":{}}}`)
 	}
 	var out bytes.Buffer
 	out.WriteString(`<!doctype html>
@@ -512,7 +525,7 @@ func (a *app) renderStatusPage() []byte {
             </div>
             <div class="cwp-settings-grid">
               <label class="cwp-model-field"><span>模型</span>
-                <textarea id="model" spellcheck="false" placeholder="gpt-5.4, claude-sonnet-4-6"></textarea>
+                <textarea id="model" spellcheck="false" placeholder="gpt-6-luna, claude-sonnet-4-6"></textarea>
                 <span class="cwp-muted">可填多个模型，支持逗号、中文逗号、顿号、分号或换行分隔。</span>
               </label>
               <label><span>最小间隔</span>
@@ -606,8 +619,8 @@ func (a *app) renderStatusPage() []byte {
 	out.Write(rawData)
 	out.WriteString(`;
     const DEFAULT_TIMES = ['07:00', '12:00', '17:00'];
-    const DEFAULT_PUSH_TIMES = ['10:00', '14:00', '18:00'];
-    const DEFAULT_MODEL = 'gpt-5.4, claude-sonnet-4-6';
+    const DEFAULT_PUSH_TIMES = ['10:00', '15:00'];
+    const DEFAULT_MODEL = 'gpt-6-luna, claude-sonnet-4-6';
     const BATCH_WARMUP_CONCURRENCY = 4;
     const ENDPOINTS = {
       snapshot: '/v0/management/cpa-window-primer/snapshot',
@@ -750,7 +763,7 @@ func (a *app) renderStatusPage() []byte {
     function formatError(data, fallback) {
       if (!data) return fallback;
       if (typeof data === 'string') return data;
-      return data.message || data.error || fallback;
+      return data.msg || data.message || data.error || fallback;
     }
 
     function parseDuration(text) {
@@ -773,15 +786,42 @@ func (a *app) renderStatusPage() []byte {
     function attemptText(record) {
       if (!record) return '无';
       if (record.success) return '成功';
-      return '未生效' + (record.error ? '：' + humanizeError(record.error) : '');
+      return warmupFeedback(record);
+    }
+
+    function warmupFeedback(record, fallbackError) {
+      if (record && record.msg) return record.msg;
+      const raw = (record && (record.error || record.response_summary)) || fallbackError || '';
+      const text = decodeErrorText(raw).split('; 模型兜底记录:')[0];
+      const model = record && record.model ? '模型「' + record.model + '」' : '所选模型';
+      if (/selected model is at capacity|model is at capacity/i.test(text)) {
+        return '预热失败：' + model + '暂时繁忙，请稍后重试或更换模型。';
+      }
+      if (/model_not_found|model not found|unknown provider for model|unknown model|unsupported model|invalid model|not a valid model|no such model/i.test(text)) {
+        return '预热失败：' + model + '不可用。请在“预热设置 → 模型”中改为 CPA 当前提供且该账号支持的模型，然后重试。';
+      }
+      if (/failed to fetch|networkerror|network error|load failed/i.test(text)) {
+        return '预热失败：无法连接 CPA，请检查网络及服务地址后重试。';
+      }
+      const friendly = humanizeError(text);
+      if (/[\u4e00-\u9fff]/.test(friendly) && !/host_call_failed|[{}]/.test(friendly)) {
+        return '预热失败：' + friendly;
+      }
+      return '预热失败：服务未能完成请求。请检查模型、认证文件和网络配置后重试。';
     }
 
     function humanizeError(raw) {
-      const text = String(raw || '').trim();
+      const text = decodeErrorText(raw);
       if (!text) return '';
       const lower = text.toLowerCase();
-      if (lower.includes('quota') || lower.includes('rate_limit') || lower.includes('rate limit') || lower.includes('usage') || lower.includes('exhausted') || lower.includes('credit') || lower.includes('too many requests') || lower.includes('429') || lower.includes('payment') || text.includes('额度') || text.includes('限流')) {
+      if (lower.includes('quota') || lower.includes('usage_limit') || lower.includes('exhausted') || lower.includes('credit') || lower.includes('payment') || text.includes('额度已满') || text.includes('限额已满')) {
         return '额度已满';
+      }
+      if (lower.includes('model_not_found') || lower.includes('unknown provider for model')) {
+        return '预热模型不可用，请检查模型配置';
+      }
+      if (lower.includes('rate_limit') || lower.includes('rate limit') || lower.includes('too many requests') || lower.includes('429') || text.includes('限流')) {
+        return '请求限流，请稍后重试';
       }
       if (lower.includes('min_interval_not_met')) return '未到最小间隔';
       if (lower.includes('warmup_already_running')) return '正在预热';
@@ -798,8 +838,22 @@ func (a *app) renderStatusPage() []byte {
       if (lower.includes('codex_warmup_request_failed')) return '目标认证直连请求失败';
       if (lower.includes('access token not found')) return '目标认证文件缺少 Access Token';
       if (lower.includes('need') && lower.includes('密钥')) return text;
-      if (text.length > 48) return text.slice(0, 48) + '…';
-      return text;
+      const bodyStart = text.indexOf('{');
+      if (bodyStart >= 0) {
+        try {
+          const body = JSON.parse(text.slice(bodyStart));
+          const detail = body.error && (body.error.message || body.error);
+          if (typeof detail === 'string') return compactText(detail, 96);
+        } catch (_) {}
+      }
+      return compactText(text, 96);
+    }
+
+    function decodeErrorText(raw) {
+      return String(raw || '').trim()
+        .replace(/&amp;/g, '&')
+        .replace(/&#(?:34|x22);|&quot;/gi, '"')
+        .replace(/&#(?:39|x27);|&apos;/gi, "'");
     }
 
     function compactText(raw, maxLength) {
@@ -822,18 +876,18 @@ func (a *app) renderStatusPage() []byte {
       if (authState && authState.quota_blocked_until) {
         const until = new Date(authState.quota_blocked_until);
         if (!Number.isNaN(until.getTime()) && Date.now() < until.getTime()) {
-          return '额度已满，忽略至 ' + until.toLocaleString('zh-CN', { hour12: false });
+          return '额度已满，预计 ' + until.toLocaleString('zh-CN', { hour12: false }) + ' 恢复；每分钟复查';
         }
       }
       const hostUntilValue = auth && (auth.quota_blocked_until || auth.next_retry_after);
       if (hostUntilValue) {
         const until = new Date(hostUntilValue);
         if (!Number.isNaN(until.getTime()) && Date.now() < until.getTime()) {
-          return '额度已满，忽略至 ' + until.toLocaleString('zh-CN', { hour12: false });
+          return '暂不可用，预计 ' + until.toLocaleString('zh-CN', { hour12: false }) + ' 重试；每分钟复查额度';
         }
       }
       if (auth && auth.blocked_reason && humanizeError(auth.blocked_reason) === '额度已满') {
-        return '额度已满，后台会在下次窗口前复查';
+        return '额度已满，每分钟复查，恢复后解除限制';
       }
       if (!authState || !authState.last_success_at) return '可立即发送';
       const duration = parseDuration(state.snapshot.config.min_interval);
@@ -1054,6 +1108,10 @@ func (a *app) renderStatusPage() []byte {
         const attemptTd = document.createElement('td');
         const attemptLine = document.createElement('div');
         attemptLine.textContent = attemptText(itemState.last_attempt);
+        if (itemState.last_attempt) {
+          attemptLine.title = decodeErrorText(itemState.last_attempt.error) +
+            (itemState.last_attempt.response_summary ? '\n' + decodeErrorText(itemState.last_attempt.response_summary) : '');
+        }
         attemptTd.appendChild(attemptLine);
         const nextLine = document.createElement('div');
         nextLine.className = 'cwp-muted';
@@ -1087,18 +1145,30 @@ func (a *app) renderStatusPage() []byte {
       }
     }
 
-    async function refreshSnapshot(showMessage = true) {
+    let snapshotRefreshing = false;
+    async function refreshSnapshot(showMessage = true, preserveForm = false) {
+      if (snapshotRefreshing) return;
+      snapshotRefreshing = true;
       if (showMessage) clearStatus();
       try {
         const response = await fetch(ENDPOINTS.snapshot, { headers: authHeaders() });
         const data = await readJSON(response);
         if (!response.ok) throw new Error(formatError(data, '刷新状态失败'));
-        state.snapshot = normalizeSnapshot(data);
-        renderAll();
+        const next = normalizeSnapshot(data);
+        if (preserveForm) next.config = state.snapshot.config;
+        state.snapshot = next;
+        if (preserveForm) {
+          renderOverview();
+          renderAuths();
+        } else {
+          renderAll();
+        }
         if (showMessage) setStatus('状态已刷新。');
       } catch (error) {
         if (error.connectionStatus) return;
-        setStatus(error.message || String(error), true);
+        if (!preserveForm) setStatus(error.message || String(error), true);
+      } finally {
+        snapshotRefreshing = false;
       }
     }
 
@@ -1109,6 +1179,7 @@ func (a *app) renderStatusPage() []byte {
         const data = await readJSON(response);
         if (!response.ok) throw new Error(formatError(data, '额度预览失败'));
         renderUsage(data);
+        await refreshSnapshot(false, true);
         if (showMessage) setStatus('额度已刷新。');
       } catch (error) {
         if (error.connectionStatus) return;
@@ -1140,9 +1211,9 @@ func (a *app) renderStatusPage() []byte {
         title.appendChild(k); title.appendChild(v);
         box.appendChild(title);
         if (g.has_data) {
-          const lines = Array.isArray(g.lines) && g.lines.length ? g.lines : [
-            { label: '5小时限额', percent: g.primary_percent, reset: g.primary_reset },
-            { label: '周限额', percent: g.secondary_percent, reset: g.secondary_reset }
+          const lines = Array.isArray(g.lines) ? g.lines : [
+            ...(g.has_primary ? [{ label: '5小时限额', percent: g.primary_percent, reset: g.primary_reset }] : []),
+            ...(g.has_secondary ? [{ label: '周限额', percent: g.secondary_percent, reset: g.secondary_reset }] : [])
           ];
           for (const line of lines) {
             box.appendChild(usageLine(line.label, line.percent, line.reset));
@@ -1227,7 +1298,7 @@ func (a *app) renderStatusPage() []byte {
       });
       const data = await readJSON(response);
       if (!response.ok) {
-        const error = new Error(formatError(data, '手动预热失败'));
+        const error = new Error(warmupFeedback(data));
         error.data = data;
         throw error;
       }
@@ -1238,17 +1309,18 @@ func (a *app) renderStatusPage() []byte {
       clearStatus();
       try {
         const data = await runWarmupRequest(authID, force);
-        await refreshSnapshot(false);
         if (data && data.success === false) {
-          setStatus('预热未生效：' + humanizeError(data.error || ''), true);
+          setStatus(warmupFeedback(data), true);
         } else {
           setStatus('手动预热完成，不影响后台定时计划。');
         }
+        await refreshSnapshot(false, true);
       } catch (error) {
         if (error.connectionStatus) return;
         const data = error.data || {};
-        const message = data && data.error ? humanizeError(data.error) : (error.message || String(error));
-        setStatus('预热未生效：' + message, true);
+        const message = warmupFeedback(data, error.message || String(error));
+        setStatus(message, true);
+        await refreshSnapshot(false, true);
       }
     }
 
@@ -1279,14 +1351,14 @@ func (a *app) renderStatusPage() []byte {
             try {
               const data = await runWarmupRequest(authID, true);
               if (data && data.success === false) {
-                failures.push(authID + '：' + humanizeError(data.error || '未生效'));
+                failures.push(authID + '：' + warmupFeedback(data));
               } else {
                 success += 1;
               }
             } catch (error) {
               if (error.connectionStatus) throw error;
               const data = error.data || {};
-              const message = data && data.error ? humanizeError(data.error) : (error.message || String(error));
+              const message = warmupFeedback(data, error.message || String(error));
               failures.push(authID + '：' + message);
             } finally {
               done += 1;
@@ -1308,7 +1380,7 @@ func (a *app) renderStatusPage() []byte {
           setStatus('批量预热完成：成功 ' + success + '。');
         }
       } catch (error) {
-        if (!error.connectionStatus) setStatus(error.message || String(error), true);
+        if (!error.connectionStatus) setStatus(warmupFeedback(null, error.message || String(error)), true);
       } finally {
         button.disabled = false;
         button.textContent = '批量预热';
@@ -1339,6 +1411,11 @@ func (a *app) renderStatusPage() []byte {
     });
     restoreManagementKey();
     renderAll();
+    setInterval(() => {
+      if (!document.hidden && field('managementKey').value.trim()) {
+        refreshSnapshot(false, true);
+      }
+    }, 30000);
   </script>
 </body>
 </html>`)

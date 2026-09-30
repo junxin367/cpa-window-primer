@@ -151,6 +151,8 @@ func TestClaudeGroupViewIncludesSonnetWeeklyLine(t *testing.T) {
 	reset := time.Date(2026, 6, 30, 2, 0, 0, 0, time.UTC)
 	base := aggregateResult{
 		HasData:          true,
+		HasPrimary:       true,
+		HasSecondary:     true,
 		PrimaryPercent:   10,
 		PrimaryReset:     reset.Add(-time.Hour),
 		SecondaryPercent: 20,

@@ -23,10 +23,10 @@ type usageEntry struct {
 	AuthID    string
 	Provider  string // codex / claude
 	Email     string
-	Plan      string  // 原始套餐字符串
-	Weight    float64 // 套餐倍数（相对基准单位）
-	Primary   usageWindow
-	Secondary usageWindow
+	Plan      string      // 原始套餐字符串
+	Weight    float64     // 套餐倍数（相对基准单位）
+	Primary   usageWindow // 归一化后的 5 小时窗口，不等同于上游 primary_window。
+	Secondary usageWindow // 归一化后的周窗口，不等同于上游 secondary_window。
 	// Sonnet 为 Claude 单独统计的窗口（如有）。
 	SonnetPrimary   usageWindow
 	SonnetSecondary usageWindow
@@ -225,13 +225,16 @@ func fetchCodexUsage(authID, authIndex, email string) usageEntry {
 	if strings.TrimSpace(authIndex) == "" {
 		authIndex = authID
 	}
-	token, err := accessTokenForAuth(authIndex)
+	credentials, err := codexCredentialsForAuth(authIndex)
 	if err != nil {
 		entry.Err = err.Error()
 		return entry
 	}
 	headers := http.Header{}
-	headers.Set("Authorization", "Bearer "+token)
+	headers.Set("Authorization", "Bearer "+credentials.AccessToken)
+	if credentials.AccountID != "" {
+		headers.Set("Chatgpt-Account-Id", credentials.AccountID)
+	}
 	headers.Set("Content-Type", "application/json")
 	resp, err := callHostHTTPDo(http.MethodGet, codexUsageURL, headers, nil)
 	if err != nil {
@@ -308,8 +311,8 @@ func parseCodexUsageBody(body []byte, entry *usageEntry) {
 	var doc struct {
 		PlanType  string `json:"plan_type"`
 		RateLimit struct {
-			Primary   codexWindowJSON `json:"primary_window"`
-			Secondary codexWindowJSON `json:"secondary_window"`
+			Primary   *codexWindowJSON `json:"primary_window"`
+			Secondary *codexWindowJSON `json:"secondary_window"`
 		} `json:"rate_limit"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
@@ -320,17 +323,57 @@ func parseCodexUsageBody(body []byte, entry *usageEntry) {
 		entry.Plan = doc.PlanType
 		entry.Weight = codexPlanWeight(doc.PlanType)
 	}
-	entry.Primary = doc.RateLimit.Primary.toWindow()
-	entry.Secondary = doc.RateLimit.Secondary.toWindow()
+	entry.Primary = usageWindow{}
+	entry.Secondary = usageWindow{}
+	for _, candidate := range []struct {
+		window *codexWindowJSON
+		weekly bool
+	}{
+		{doc.RateLimit.Primary, false},
+		{doc.RateLimit.Secondary, true},
+	} {
+		if candidate.window == nil || candidate.window.UsedPercent == nil {
+			continue
+		}
+		weekly := candidate.weekly
+		// 窗口位置会随套餐变化；仅在旧响应缺少时长时沿用原来的位置约定。
+		if seconds := candidate.window.LimitWindowSeconds; seconds != nil {
+			switch *seconds {
+			case 5 * 60 * 60:
+				weekly = false
+			case 7 * 24 * 60 * 60:
+				weekly = true
+			default:
+				entry.Err = fmt.Sprintf("额度窗口时长 %d 秒暂不支持，无法归入 5 小时或周额度", *seconds)
+				return
+			}
+		}
+		target := &entry.Primary
+		if weekly {
+			target = &entry.Secondary
+		}
+		if target.HasData {
+			entry.Err = "额度接口返回重复时长的窗口，无法准确汇总"
+			return
+		}
+		*target = candidate.window.toWindow()
+	}
+	if !entry.Primary.HasData && !entry.Secondary.HasData {
+		entry.Err = "parse usage: missing quota windows"
+	}
 }
 
 type codexWindowJSON struct {
-	UsedPercent float64 `json:"used_percent"`
-	ResetAt     int64   `json:"reset_at"`
+	UsedPercent        *float64 `json:"used_percent"`
+	ResetAt            int64    `json:"reset_at"`
+	LimitWindowSeconds *int64   `json:"limit_window_seconds"`
 }
 
 func (w codexWindowJSON) toWindow() usageWindow {
-	out := usageWindow{UsedPercent: w.UsedPercent, HasData: true}
+	if w.UsedPercent == nil {
+		return usageWindow{}
+	}
+	out := usageWindow{UsedPercent: *w.UsedPercent, HasData: true}
 	if w.ResetAt > 0 {
 		out.ResetAt = time.Unix(w.ResetAt, 0)
 	}

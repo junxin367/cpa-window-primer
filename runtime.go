@@ -22,7 +22,11 @@ type app struct {
 	lastError string
 	// lastUsagePushKey 记录最近一次额度推送的窗口键（日期+时钟），避免重复推送。
 	lastUsagePushKey string
+	quotaRecheckAt   time.Time
+	quotaRechecking  bool
 }
+
+const quotaRecheckInterval = time.Minute
 
 func newApp() *app {
 	cfg, _ := normalizeConfig(defaultPluginConfig())
@@ -104,6 +108,7 @@ func (a *app) worker(stop <-chan struct{}, interval time.Duration, runID uint64)
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	go a.recheckQuotaBlocks(time.Now())
 	a.runDue(time.Now(), stop, runID)
 	a.runUsagePushDue(time.Now())
 	for {
@@ -111,9 +116,56 @@ func (a *app) worker(stop <-chan struct{}, interval time.Duration, runID uint64)
 		case <-stop:
 			return
 		case now := <-ticker.C:
+			go a.recheckQuotaBlocks(now)
 			a.runDue(now, stop, runID)
 			a.runUsagePushDue(now)
 		}
+	}
+}
+
+// 额度复查独立于预热窗口，仅查询额度，不发送模型请求或覆盖预热历史。
+// 状态页与后台共用节流，避免多个页面重复请求。
+func (a *app) recheckQuotaBlocks(now time.Time) {
+	a.mu.Lock()
+	if a.quotaRechecking || (!a.quotaRecheckAt.IsZero() && now.Sub(a.quotaRecheckAt) < quotaRecheckInterval) {
+		a.mu.Unlock()
+		return
+	}
+	a.quotaRechecking = true
+	a.quotaRecheckAt = now
+	cfg := a.cfg
+	state := a.state.clone()
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.quotaRechecking = false
+		a.mu.Unlock()
+	}()
+
+	auths, err := callHostAuthList()
+	if err != nil {
+		a.setLastError(err.Error())
+		return
+	}
+	selected := map[string]bool{}
+	for _, id := range cfg.AuthIDs {
+		selected[id] = true
+	}
+	var blockedIDs []string
+	for _, auth := range auths {
+		if !isSchedulableOAuthAuth(auth) || len(selected) == 0 || !authEntrySelected(selected, auth) {
+			continue
+		}
+		id := authIDForEntry(auth)
+		item := state.Auths[id]
+		if (item != nil && item.QuotaBlockedUntil != nil) || isHostAuthQuotaBlocked(auth, now) {
+			blockedIDs = append(blockedIDs, id)
+		}
+	}
+	entries := fetchUsageTargets(collectUsageTargets(blockedIDs, auths))
+	for _, entry := range entries {
+		// 这里只需判断额度窗口，不必访问受 API Key 保护的模型列表。
+		a.reconcileQuotaBlockFromUsage(entry.AuthID, "", cfg, parseModelList(cfg.Model), entry, time.Now(), false)
 	}
 }
 
@@ -478,7 +530,7 @@ func (a *app) reconcileQuotaBlockFromUsage(authID, windowKey string, cfg runtime
 	if modelText == "" {
 		modelText = cfg.Model
 	}
-	if usage.Err != "" {
+	if usage.Err != "" || (!usage.Primary.HasData && !usage.Secondary.HasData) {
 		a.mu.Lock()
 		until, reason, blocked := a.state.quotaBlockInfo(authID, now)
 		if !blocked {
@@ -517,15 +569,16 @@ func (a *app) reconcileQuotaBlockFromUsage(authID, windowKey string, cfg runtime
 			a.state.recordAttempt(authID, record)
 		}
 		a.state.recordQuotaBlocked(authID, now, block.Until, block.Reason)
+		a.state.ensureAuth(authID).QuotaCheckedAt = &now
 		if err := saveState(cfg.StatePath, a.state); err != nil {
 			a.lastError = err.Error()
 		}
 		return record, true
 	}
-	if a.state.clearQuotaBlocked(authID) {
-		if err := saveState(cfg.StatePath, a.state); err != nil {
-			a.lastError = err.Error()
-		}
+	a.state.clearQuotaBlocked(authID)
+	a.state.ensureAuth(authID).QuotaCheckedAt = &now
+	if err := saveState(cfg.StatePath, a.state); err != nil {
+		a.lastError = err.Error()
 	}
 	return attemptRecord{}, false
 }

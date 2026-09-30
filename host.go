@@ -725,14 +725,12 @@ func fallbackModelForProvider(provider string) string {
 			return model
 		}
 	}
-	switch provider {
-	case "claude":
-		return "claude-sonnet-4-6"
-	case "codex":
-		return "gpt-5.4"
-	default:
-		return defaultFirstModel()
+	for _, model := range parseModelList(defaultModel) {
+		if modelMatchesProvider(model, provider) {
+			return model
+		}
 	}
+	return defaultFirstModel()
 }
 
 func defaultFirstModel() string {
@@ -747,13 +745,11 @@ func chooseFallbackModel(provider string, models []availableModel) string {
 	if len(models) == 0 {
 		return ""
 	}
-	preferred := map[string][]string{
-		"codex":  []string{"gpt-5.4", "gpt-5.3-codex", "gpt-5"},
-		"claude": []string{"claude-sonnet-4-6", "claude-sonnet-4-5", "claude-sonnet"},
-	}
-	for _, want := range preferred[provider] {
+	// 项目默认值优先；仅接受模型列表中的精确匹配，避免把图像模型当成文本预热模型。
+	preferred := append(parseModelList(defaultModel), "gpt-5.4", "gpt-5.3-codex", "claude-sonnet-4-5")
+	for _, want := range preferred {
 		for _, model := range models {
-			if modelMatchesAvailableProvider(model, provider) && strings.Contains(strings.ToLower(model.ID), want) {
+			if modelMatchesAvailableProvider(model, provider) && strings.EqualFold(model.ID, want) {
 				return model.ID
 			}
 		}
@@ -763,13 +759,13 @@ func chooseFallbackModel(provider string, models []availableModel) string {
 			return model.ID
 		}
 	}
-	if provider == "" {
-		return strings.TrimSpace(models[0].ID)
-	}
 	return ""
 }
 
 func modelMatchesAvailableProvider(model availableModel, provider string) bool {
+	if strings.Contains(strings.ToLower(model.ID), "image") {
+		return false
+	}
 	if provider == "" {
 		return strings.TrimSpace(model.ID) != ""
 	}

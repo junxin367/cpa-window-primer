@@ -19,6 +19,7 @@ type authState struct {
 	QuotaBlockedAt     *time.Time              `json:"quota_blocked_at,omitempty"`
 	QuotaBlockedUntil  *time.Time              `json:"quota_blocked_until,omitempty"`
 	QuotaBlockedReason string                  `json:"quota_blocked_reason,omitempty"`
+	QuotaCheckedAt     *time.Time              `json:"quota_checked_at,omitempty"`
 	Windows            map[string]windowRecord `json:"windows,omitempty"`
 }
 
@@ -29,6 +30,7 @@ type attemptRecord struct {
 	Success         bool      `json:"success"`
 	StatusCode      int       `json:"status_code,omitempty"`
 	Error           string    `json:"error,omitempty"`
+	Msg             string    `json:"msg,omitempty"`
 	ResponseSummary string    `json:"response_summary,omitempty"`
 }
 
@@ -61,6 +63,7 @@ func (s *pluginState) clone() *pluginState {
 		}
 		if item.LastAttempt != nil {
 			attempt := *item.LastAttempt
+			attempt.Msg = warmupMessage(attempt)
 			copyItem.LastAttempt = &attempt
 		}
 		if item.QuotaBlockedAt != nil {
@@ -72,6 +75,10 @@ func (s *pluginState) clone() *pluginState {
 			copyItem.QuotaBlockedUntil = &until
 		}
 		copyItem.QuotaBlockedReason = item.QuotaBlockedReason
+		if item.QuotaCheckedAt != nil {
+			at := *item.QuotaCheckedAt
+			copyItem.QuotaCheckedAt = &at
+		}
 		if item.Windows != nil {
 			copyItem.Windows = make(map[string]windowRecord, len(item.Windows))
 			for key, record := range item.Windows {
@@ -192,6 +199,14 @@ func (s *pluginState) recordQuotaBlocked(authID string, at, until time.Time, rea
 	item.QuotaBlockedAt = &at
 	item.QuotaBlockedUntil = &until
 	item.QuotaBlockedReason = strings.TrimSpace(reason)
+	item.QuotaCheckedAt = nil
+}
+
+func (s *pluginState) quotaRecentlyAvailable(authID string, now time.Time) bool {
+	item := s.Auths[authID]
+	return item != nil && item.QuotaCheckedAt != nil &&
+		!now.Before(*item.QuotaCheckedAt) && now.Sub(*item.QuotaCheckedAt) < quotaRecheckInterval &&
+		item.QuotaBlockedUntil == nil
 }
 
 func (s *pluginState) clearQuotaBlocked(authID string) bool {

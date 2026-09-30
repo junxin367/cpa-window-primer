@@ -3,11 +3,11 @@ package main
 const (
 	pluginID           = "cpa-window-primer"
 	pluginName         = "CPA Window Primer"
-	pluginVersion      = "0.2.21"
+	pluginVersion      = "0.2.22"
 	pluginAuthor       = "junxin367"
 	pluginRepository   = "https://github.com/junxin367/cpa-window-primer"
 	primerHeader       = "X-CPA-Window-Primer-Auth-ID"
-	defaultModel       = "gpt-5.4, claude-sonnet-4-6"
+	defaultModel       = "gpt-6-luna, claude-sonnet-4-6"
 	defaultPrompt      = "hi"
 	defaultMinInterval = "5h"
 	defaultTick        = "5s"
@@ -46,4 +46,4 @@ var claudePlanMultiplier = map[string]float64{
 }
 
 var defaultTimes = []string{"07:00", "12:00", "17:00"}
-var defaultUsagePushTimes = []string{"10:00", "14:00", "18:00"}
+var defaultUsagePushTimes = []string{"10:00", "15:00"}

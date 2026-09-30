@@ -164,13 +164,15 @@ func classifyProvider(provider, typ string) string {
 }
 
 // aggregateGroup 汇总同一 provider 下多个认证文件的额度。
-// 规则：按套餐倍数加权；周限额未用完时把 5h 计入总额度，周用完则 5h 按 0 算。
+// 规则：每类窗口仅按实际具备该窗口的账号进行套餐加权；周用完则已有的 5h 按 0 可用算。
 type aggregateResult struct {
-	HasData         bool
-	PrimaryPercent  float64
-	PrimaryReset    time.Time
+	HasData          bool
+	HasPrimary       bool
+	HasSecondary     bool
+	PrimaryPercent   float64
+	PrimaryReset     time.Time
 	SecondaryPercent float64
-	SecondaryReset  time.Time
+	SecondaryReset   time.Time
 }
 
 func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
@@ -228,10 +230,12 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 	}
 	res := aggregateResult{HasData: any}
 	if primaryTotalWeight > 0 {
+		res.HasPrimary = true
 		res.PrimaryPercent = primaryUsedWeighted / primaryTotalWeight
 		res.PrimaryReset = earliestPrimaryReset
 	}
 	if secondaryTotalWeight > 0 {
+		res.HasSecondary = true
 		res.SecondaryPercent = secondaryUsedWeighted / secondaryTotalWeight
 		res.SecondaryReset = earliestSecondaryReset
 	}
@@ -264,18 +268,13 @@ func buildUsageMessage(entries []usageEntry) string {
 	codex := filterProvider(entries, "codex")
 	if len(codex) > 0 {
 		b.WriteString("\n**GPT**\n")
-		writeGroup(&b, aggregateGroup(codex, false), nil)
+		writeGroup(&b, aggregateGroup(codex, false))
 	}
 
 	claude := filterProvider(entries, "claude")
 	if len(claude) > 0 {
 		b.WriteString("\n**CLAUDE**\n")
-		sonnet := aggregateGroup(claude, true)
-		var extra []usageLineItem
-		if sonnet.HasData {
-			extra = append(extra, usageLineItem{"Sonnet 周限额", sonnet.SecondaryPercent, sonnet.SecondaryReset})
-		}
-		writeGroup(&b, aggregateGroup(claude, false), extra)
+		writeGroup(&b, aggregateGroup(claude, false))
 	}
 	if len(codex) == 0 && len(claude) == 0 {
 		b.WriteString("\n> <font color=\"comment\">暂无额度数据，请先选择认证文件</font>\n")
@@ -283,22 +282,16 @@ func buildUsageMessage(entries []usageEntry) string {
 	return b.String()
 }
 
-// usageLineItem 是一行额度明细。
-type usageLineItem struct {
-	Label   string
-	Percent float64
-	Reset   time.Time
-}
-
-func writeGroup(b *strings.Builder, agg aggregateResult, extra []usageLineItem) {
+func writeGroup(b *strings.Builder, agg aggregateResult) {
 	if !agg.HasData {
 		b.WriteString("> <font color=\"comment\">暂无额度数据</font>\n")
 		return
 	}
-	writeUsageLine(b, "5小时限额", agg.PrimaryPercent, agg.PrimaryReset)
-	writeUsageLine(b, "周限额", agg.SecondaryPercent, agg.SecondaryReset)
-	for _, item := range extra {
-		writeUsageLine(b, item.Label, item.Percent, item.Reset)
+	if agg.HasPrimary {
+		writeUsageLine(b, "5小时限额", agg.PrimaryPercent, agg.PrimaryReset)
+	}
+	if agg.HasSecondary {
+		writeUsageLine(b, "周限额", agg.SecondaryPercent, agg.SecondaryReset)
 	}
 }
 
@@ -480,21 +473,23 @@ func truncateBody(body []byte) string {
 
 // usageSnapshotView 是额度预览的返回结构。
 type usageSnapshotView struct {
-	GeneratedAt string             `json:"generated_at"`
-	Message     string             `json:"message"`
-	Groups      []usageGroupView   `json:"groups"`
-	Errors      []string           `json:"errors,omitempty"`
+	GeneratedAt string           `json:"generated_at"`
+	Message     string           `json:"message"`
+	Groups      []usageGroupView `json:"groups"`
+	Errors      []string         `json:"errors,omitempty"`
 }
 
 type usageGroupView struct {
-	Provider         string  `json:"provider"`
-	Label            string  `json:"label"`
-	Kind             string  `json:"kind,omitempty"`
-	PrimaryPercent   float64 `json:"primary_percent"`
-	PrimaryReset     string  `json:"primary_reset,omitempty"`
-	SecondaryPercent float64 `json:"secondary_percent"`
-	SecondaryReset   string  `json:"secondary_reset,omitempty"`
-	HasData          bool    `json:"has_data"`
+	Provider         string            `json:"provider"`
+	Label            string            `json:"label"`
+	Kind             string            `json:"kind,omitempty"`
+	PrimaryPercent   float64           `json:"primary_percent"`
+	PrimaryReset     string            `json:"primary_reset,omitempty"`
+	SecondaryPercent float64           `json:"secondary_percent"`
+	SecondaryReset   string            `json:"secondary_reset,omitempty"`
+	HasData          bool              `json:"has_data"`
+	HasPrimary       bool              `json:"has_primary"`
+	HasSecondary     bool              `json:"has_secondary"`
 	Lines            []usageMetricView `json:"lines,omitempty"`
 }
 
@@ -515,15 +510,7 @@ func (a *app) usageSnapshot() usageSnapshotView {
 		view.Groups = append(view.Groups, groupView("codex", "GPT", aggregateGroup(codex, false)))
 	}
 	if claude := filterProvider(entries, "claude"); len(claude) > 0 {
-		var extra []usageMetricView
-		if sonnet := aggregateGroup(claude, true); sonnet.HasData {
-			extra = append(extra, usageMetricView{
-				Label:   "Sonnet 周限额",
-				Percent: sonnet.SecondaryPercent,
-				Reset:   resetText(sonnet.SecondaryReset),
-			})
-		}
-		view.Groups = append(view.Groups, groupViewWithExtra("claude", "CLAUDE", aggregateGroup(claude, false), extra))
+		view.Groups = append(view.Groups, groupView("claude", "CLAUDE", aggregateGroup(claude, false)))
 	}
 	for _, e := range entries {
 		if e.Err != "" {
@@ -544,7 +531,7 @@ func (a *app) reconcileQuotaBlocksFromUsageEntries(entries []usageEntry) {
 		if entry.AuthID == "" {
 			continue
 		}
-		models := warmupModelCandidates(cfg, entry.AuthID)
+		models := parseModelList(cfg.Model)
 		a.reconcileQuotaBlockFromUsage(entry.AuthID, "", cfg, models, entry, now, false)
 	}
 }
@@ -562,11 +549,15 @@ func groupViewWithExtra(provider, label string, agg aggregateResult, extra []usa
 		SecondaryPercent: agg.SecondaryPercent,
 		SecondaryReset:   resetText(agg.SecondaryReset),
 		HasData:          agg.HasData,
+		HasPrimary:       agg.HasPrimary,
+		HasSecondary:     agg.HasSecondary,
 	}
 	if agg.HasData {
-		view.Lines = []usageMetricView{
-			{Label: "5小时限额", Percent: agg.PrimaryPercent, Reset: resetText(agg.PrimaryReset)},
-			{Label: "周限额", Percent: agg.SecondaryPercent, Reset: resetText(agg.SecondaryReset)},
+		if agg.HasPrimary {
+			view.Lines = append(view.Lines, usageMetricView{Label: "5小时限额", Percent: agg.PrimaryPercent, Reset: resetText(agg.PrimaryReset)})
+		}
+		if agg.HasSecondary {
+			view.Lines = append(view.Lines, usageMetricView{Label: "周限额", Percent: agg.SecondaryPercent, Reset: resetText(agg.SecondaryReset)})
 		}
 		view.Lines = append(view.Lines, extra...)
 	}
