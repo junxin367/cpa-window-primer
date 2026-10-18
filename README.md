@@ -1,8 +1,8 @@
 # CPA Window Primer
 
-CLIProxyAPI 插件，用于在配置的每日时间窗口前，对选中的 Codex、OpenAI、Claude 或 Anthropic 认证文件发送一次轻量 `hi` 请求，提前触发约 5 小时可用窗口。
+CLIProxyAPI 插件，用于在配置的每日时间窗口前，对选中的 Codex、OpenAI、Claude、Anthropic 或 Devin 凭证发送一次轻量 `hi` 请求，并独立配置额度汇总推送。具体额度窗口由提供商决定。
 
-插件名称保持 provider-neutral，因为它处理的是认证文件窗口预热，不绑定某一个客户端品牌。当前筛选范围是 CPA 暴露的 Codex/OpenAI/Claude/Anthropic auth 记录。
+插件名称保持 provider-neutral，因为它处理的是认证文件窗口预热，不绑定某一个客户端品牌。当前筛选范围是 CPA 暴露的 Codex/OpenAI/Claude/Anthropic/Devin auth 记录；Devin 需要先在支持该提供商的 CPA 中完成登录。
 
 ## 行为
 
@@ -11,7 +11,9 @@ CLIProxyAPI 插件，用于在配置的每日时间窗口前，对选中的 Code
 - 默认目标窗口：`07:00`、`12:00`、`17:00`
 - 默认额度推送时间：`10:00`、`15:00`
 - 额度推送：仅工作日按配置时间定时推送；手动立即推送不受工作日限制
+- 预热与额度推送分别选择凭证、设置时间和开关；关闭预热不会停止额度推送。旧配置首次加载时，将原凭证选择复制到额度推送；之后分别保存，清空一组不会影响另一组。
 - GPT 额度按接口窗口时长归类：5 小时额度和周额度分别加权汇总；只有周额度的账号只参与周统计。如果某组账号都没有 5 小时额度，该组的预览和推送不显示 5 小时额度。
+- Devin 额度通过宿主读取 session token 并查询额度，单独显示为 DEVIN，不计入 GPT/Claude 的 5 小时额度。Max 仅显示周额度，忽略接口携带的日额度占位字段；Pro / Teams 等账号按实际返回的日、周窗口展示。Devin 账号按等权汇总；缺失或解析失败的额度不作为可用额度统计。
 - 触发窗口：每个目标时间前 1 分钟，例如 `06:59:00-07:00:00`
 - 最小间隔：同一认证文件按最近一次成功预热时间计算，默认 `5h`
 - 无额度跳过：额度接口确认用尽，或预热返回额度不足时，插件暂停该认证文件的定时预热，并显示预计恢复时间
@@ -33,7 +35,9 @@ CLIProxyAPI 插件，用于在配置的每日时间窗口前，对选中的 Code
 管理页提供：
 
 - CPA 管理密钥输入，用于保存配置、刷新状态、手动预热；密钥会保存在浏览器本地，已保存的后台预热不依赖本页面持续打开。
-- Codex、OpenAI、Claude 或 Anthropic 认证文件多选；手动禁用的账号不可选，无额度或冷却中的账号仍可保存选择，但后台定时预热会自动跳过。
+- 在凭证区通过“凭证配置 / 预热设置 / 额度推送设置”导航切换，两边的选择、全选、清空和保存互不影响，切换保留未保存的输入。
+- Codex、OpenAI、Claude、Anthropic 或 Devin 凭证多选；手动禁用的账号不可选，无额度或冷却中的账号仍可保存选择，但后台定时预热会自动跳过。
+- 额度预览和立即推送使用已保存的额度推送凭证；修改后需先点击“保存额度推送设置”。插件只保存凭证 ID，Devin session token 不写入插件配置或页面。
 - 发送时间窗口多选，默认 `07:00`、`12:00`、`17:00`。
 - 模型、预热内容、最小间隔、提前触发窗口、后台检查间隔配置。
 - 最近成功时间、最近尝试结果、下次可发送时间展示。
@@ -99,6 +103,8 @@ POST /v0/management/cpa-window-primer/run
 GET  /v0/management/cpa-window-primer/usage
 POST /v0/management/cpa-window-primer/usage-push
 ```
+
+配置 API 支持部分更新。`auth_ids` 是预热凭证，`usage_auth_ids` 是额度推送凭证；额度推送设置使用 `usage_auth_ids`、`usage_push_enabled`、`usage_push_times`、`webhook_url`，预热继续使用 `enabled`、`times`、`model` 等原字段。省略字段保留原值，`usage_auth_ids: []` 明确清空额度凭证。
 
 手动预热 payload：
 

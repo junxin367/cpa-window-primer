@@ -15,6 +15,7 @@ import (
 type pluginConfig struct {
 	Enabled      bool     `json:"enabled" yaml:"enabled"`
 	AuthIDs      []string `json:"auth_ids" yaml:"auth_ids"`
+	UsageAuthIDs []string `json:"usage_auth_ids" yaml:"usage_auth_ids"`
 	Times        []string `json:"times" yaml:"times"`
 	Model        string   `json:"model" yaml:"model"`
 	Prompt       string   `json:"prompt" yaml:"prompt"`
@@ -24,22 +25,23 @@ type pluginConfig struct {
 	StatePath    string   `json:"state_path" yaml:"state_path"`
 	ConfigPath   string   `json:"config_path" yaml:"config_path"`
 	// 额度推送相关配置。
-	WebhookURL      string   `json:"webhook_url" yaml:"webhook_url"`
-	UsagePushEnabled bool    `json:"usage_push_enabled" yaml:"usage_push_enabled"`
-	UsagePushTimes  []string `json:"usage_push_times" yaml:"usage_push_times"`
+	WebhookURL       string   `json:"webhook_url" yaml:"webhook_url"`
+	UsagePushEnabled bool     `json:"usage_push_enabled" yaml:"usage_push_enabled"`
+	UsagePushTimes   []string `json:"usage_push_times" yaml:"usage_push_times"`
 }
 
 type pluginConfigPatch struct {
-	Enabled      *bool     `json:"enabled"`
-	AuthIDs      *[]string `json:"auth_ids"`
-	Times        *[]string `json:"times"`
-	Model        *string   `json:"model"`
-	Prompt       *string   `json:"prompt"`
-	MinInterval  *string   `json:"min_interval"`
-	LeadTime     *string   `json:"lead_time"`
-	TickInterval *string   `json:"tick_interval"`
-	StatePath    *string   `json:"state_path"`
-	ConfigPath   *string   `json:"config_path"`
+	Enabled          *bool     `json:"enabled"`
+	AuthIDs          *[]string `json:"auth_ids"`
+	UsageAuthIDs     *[]string `json:"usage_auth_ids"`
+	Times            *[]string `json:"times"`
+	Model            *string   `json:"model"`
+	Prompt           *string   `json:"prompt"`
+	MinInterval      *string   `json:"min_interval"`
+	LeadTime         *string   `json:"lead_time"`
+	TickInterval     *string   `json:"tick_interval"`
+	StatePath        *string   `json:"state_path"`
+	ConfigPath       *string   `json:"config_path"`
 	WebhookURL       *string   `json:"webhook_url"`
 	UsagePushEnabled *bool     `json:"usage_push_enabled"`
 	UsagePushTimes   *[]string `json:"usage_push_times"`
@@ -47,10 +49,10 @@ type pluginConfigPatch struct {
 
 type runtimeConfig struct {
 	pluginConfig
-	Clocks       []clockTime
-	MinDuration  time.Duration
-	LeadDuration time.Duration
-	TickDuration time.Duration
+	Clocks          []clockTime
+	MinDuration     time.Duration
+	LeadDuration    time.Duration
+	TickDuration    time.Duration
 	UsagePushClocks []clockTime
 }
 
@@ -112,6 +114,11 @@ func normalizeConfig(cfg pluginConfig) (runtimeConfig, error) {
 		cfg.TickInterval = defaultTick
 	}
 	cfg.AuthIDs = uniqueTrimmed(cfg.AuthIDs)
+	// 旧配置没有独立额度凭证时只迁移一次；显式 [] 表示清空，不能回退到预热凭证。
+	if cfg.UsageAuthIDs == nil {
+		cfg.UsageAuthIDs = append([]string{}, cfg.AuthIDs...)
+	}
+	cfg.UsageAuthIDs = uniqueTrimmed(cfg.UsageAuthIDs)
 	cfg.Times = uniqueTrimmed(cfg.Times)
 	if len(cfg.Times) == 0 {
 		cfg.Times = append([]string(nil), defaultTimes...)
@@ -177,11 +184,11 @@ func normalizeConfig(cfg pluginConfig) (runtimeConfig, error) {
 	}
 	applyDefaultConfigPaths(&cfg)
 	return runtimeConfig{
-		pluginConfig: cfg,
-		Clocks:       clocks,
-		MinDuration:  minDuration,
-		LeadDuration: leadDuration,
-		TickDuration: tickDuration,
+		pluginConfig:    cfg,
+		Clocks:          clocks,
+		MinDuration:     minDuration,
+		LeadDuration:    leadDuration,
+		TickDuration:    tickDuration,
 		UsagePushClocks: usageClocks,
 	}, nil
 }
@@ -234,11 +241,17 @@ func mergeConfigPatch(current pluginConfig, raw []byte) (pluginConfig, error) {
 		return pluginConfig{}, fmt.Errorf("decode config body: %w", err)
 	}
 	next := current
+	if next.UsageAuthIDs == nil {
+		next.UsageAuthIDs = append([]string{}, current.AuthIDs...)
+	}
 	if patch.Enabled != nil {
 		next.Enabled = *patch.Enabled
 	}
 	if patch.AuthIDs != nil {
 		next.AuthIDs = append([]string(nil), (*patch.AuthIDs)...)
+	}
+	if patch.UsageAuthIDs != nil {
+		next.UsageAuthIDs = append([]string{}, (*patch.UsageAuthIDs)...)
 	}
 	if patch.Times != nil {
 		next.Times = append([]string(nil), (*patch.Times)...)
@@ -272,30 +285,52 @@ func mergeConfigPatch(current pluginConfig, raw []byte) (pluginConfig, error) {
 	return next, nil
 }
 
-func validateConfigForSave(cfg pluginConfig) error {
+func validateConfigPatchForSave(cfg pluginConfig, raw []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	var warmup, usage bool
+	for key := range fields {
+		switch key {
+		case "enabled", "auth_ids", "times", "model", "prompt", "min_interval", "lead_time", "tick_interval":
+			warmup = true
+		case "usage_auth_ids", "usage_push_enabled", "usage_push_times", "webhook_url":
+			usage = true
+		}
+	}
+	return validateConfigSections(cfg, warmup, usage)
+}
+
+func validateConfigSections(cfg pluginConfig, warmup, usage bool) error {
 	var missing []string
-	if len(uniqueTrimmed(cfg.AuthIDs)) == 0 {
-		missing = append(missing, "认证文件")
+	if warmup {
+		if cfg.Enabled && len(uniqueTrimmed(cfg.AuthIDs)) == 0 {
+			missing = append(missing, "预热认证文件")
+		}
+		if len(uniqueTrimmed(cfg.Times)) == 0 {
+			missing = append(missing, "发送窗口")
+		}
+		if strings.TrimSpace(cfg.Model) == "" {
+			missing = append(missing, "模型")
+		}
+		if strings.TrimSpace(cfg.Prompt) == "" {
+			missing = append(missing, "预热内容")
+		}
+		if strings.TrimSpace(cfg.MinInterval) == "" {
+			missing = append(missing, "最小间隔")
+		}
+		if strings.TrimSpace(cfg.LeadTime) == "" {
+			missing = append(missing, "提前触发窗口")
+		}
+		if strings.TrimSpace(cfg.TickInterval) == "" {
+			missing = append(missing, "后台检查间隔")
+		}
 	}
-	if len(uniqueTrimmed(cfg.Times)) == 0 {
-		missing = append(missing, "发送窗口")
-	}
-	if strings.TrimSpace(cfg.Model) == "" {
-		missing = append(missing, "模型")
-	}
-	if strings.TrimSpace(cfg.Prompt) == "" {
-		missing = append(missing, "预热内容")
-	}
-	if strings.TrimSpace(cfg.MinInterval) == "" {
-		missing = append(missing, "最小间隔")
-	}
-	if strings.TrimSpace(cfg.LeadTime) == "" {
-		missing = append(missing, "提前触发窗口")
-	}
-	if strings.TrimSpace(cfg.TickInterval) == "" {
-		missing = append(missing, "后台检查间隔")
-	}
-	if cfg.UsagePushEnabled {
+	if usage && cfg.UsagePushEnabled {
+		if len(uniqueTrimmed(cfg.UsageAuthIDs)) == 0 {
+			missing = append(missing, "额度推送认证文件")
+		}
 		if strings.TrimSpace(cfg.WebhookURL) == "" {
 			missing = append(missing, "企微 / Webhook 地址")
 		}

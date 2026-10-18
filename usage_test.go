@@ -6,7 +6,95 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	"google.golang.org/protobuf/encoding/protowire"
 )
+
+func devinPlanUsageFixture(plan string, daily *uint64, dailyReset bool) []byte {
+	var status []byte
+	if daily != nil {
+		status = protowire.AppendTag(status, 14, protowire.VarintType)
+		status = protowire.AppendVarint(status, *daily)
+	}
+	status = protowire.AppendTag(status, 15, protowire.VarintType)
+	status = protowire.AppendVarint(status, 60)
+	if dailyReset {
+		status = protowire.AppendTag(status, 17, protowire.VarintType)
+		status = protowire.AppendVarint(status, 1900000000)
+	}
+	status = protowire.AppendTag(status, 18, protowire.VarintType)
+	status = protowire.AppendVarint(status, 1900600000)
+	// 套餐放在额度字段之后，确保解析不依赖 wire 顺序。
+	if plan != "" {
+		status = appendDevinBytes(status, 1, appendDevinBytes(nil, 2, []byte(plan)))
+	}
+	return appendDevinBytes(nil, 1, appendDevinBytes(nil, 13, status))
+}
+
+func TestDevinPlanControlsDailyQuota(t *testing.T) {
+	zero, available, placeholder := uint64(0), uint64(75), ^uint64(0)
+	tests := []struct {
+		name, plan, storedPlan string
+		daily                  *uint64
+		dailyReset, wantDaily  bool
+		wantBlocked            bool
+	}{
+		{name: "Max 日额度零值占位", plan: "Max", daily: &zero, dailyReset: true},
+		{name: "Max 日额度剩余占位", plan: " max ", daily: &available, dailyReset: true},
+		{name: "Max 不限额占位", plan: "MAX", daily: &placeholder, dailyReset: true},
+		{name: "Max 日字段省略但有重置", plan: "Max", dailyReset: true},
+		{name: "凭证套餐兜底", storedPlan: "Max", daily: &zero, dailyReset: true},
+		{name: "上游套餐优先", plan: "Pro", storedPlan: "Max", daily: &zero, dailyReset: true, wantDaily: true, wantBlocked: true},
+		{name: "Pro 日额度保留", plan: "Pro", daily: &available, dailyReset: true, wantDaily: true},
+		{name: "Teams 日额度保留", plan: "Teams", daily: &available, dailyReset: true, wantDaily: true},
+		{name: "未知套餐仅周窗口", plan: "unknown"},
+		{name: "未知套餐按实际窗口", plan: "unknown", daily: &available, dailyReset: true, wantDaily: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := usageEntry{Provider: "devin", Plan: tt.storedPlan, Weight: 1}
+			if err := parseDevinUsageBody(devinPlanUsageFixture(tt.plan, tt.daily, tt.dailyReset), &entry); err != nil {
+				t.Fatal(err)
+			}
+			if entry.Daily.HasData != tt.wantDaily || !entry.Secondary.HasData || entry.Secondary.UsedPercent != 40 {
+				t.Fatalf("unexpected quota windows: %#v", entry)
+			}
+			if !tt.wantDaily && !entry.Daily.ResetAt.IsZero() {
+				t.Fatal("daily placeholder reset time was retained")
+			}
+			if block := usageQuotaBlocked(entry, nil, time.Now()); block.Blocked != tt.wantBlocked {
+				t.Fatalf("incorrect warmup block: %#v", block)
+			}
+			message := buildUsageMessage([]usageEntry{entry})
+			if strings.Contains(message, "日限额") != tt.wantDaily || !strings.Contains(message, "周限额") || !strings.Contains(message, "60%") {
+				t.Fatalf("incorrect push message: %s", message)
+			}
+			view := groupView("devin", "DEVIN", aggregateGroup([]usageEntry{entry}, false))
+			wantLines := 1
+			if tt.wantDaily {
+				wantLines++
+			}
+			if len(view.Lines) != wantLines || view.Lines[len(view.Lines)-1].Label != "周限额" {
+				t.Fatalf("incorrect preview: %#v", view)
+			}
+		})
+	}
+}
+
+func TestDevinMixedPlansExcludeMaxFromDailyAggregate(t *testing.T) {
+	zero, available := uint64(0), uint64(75)
+	max := usageEntry{Provider: "devin", Weight: 1}
+	pro := usageEntry{Provider: "devin", Weight: 1}
+	if err := parseDevinUsageBody(devinPlanUsageFixture("Max", &zero, true), &max); err != nil {
+		t.Fatal(err)
+	}
+	if err := parseDevinUsageBody(devinPlanUsageFixture("Pro", &available, true), &pro); err != nil {
+		t.Fatal(err)
+	}
+	aggregate := aggregateGroup([]usageEntry{max, pro}, false)
+	if aggregate.PrimaryPercent != 25 || aggregate.SecondaryPercent != 40 {
+		t.Fatalf("Max affected daily aggregate: %#v", aggregate)
+	}
+}
 
 func TestCodexPlanWeightMatchesCPAManager(t *testing.T) {
 	tests := []struct {

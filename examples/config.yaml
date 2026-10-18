@@ -6,6 +6,12 @@ plugins:
       enabled: true
       priority: 100
       auth_ids: []
+      usage_auth_ids: []
+      usage_push_enabled: false
+      usage_push_times:
+        - "10:00"
+        - "15:00"
+      webhook_url: ""
       times:
         - "07:00"
         - "12:00"

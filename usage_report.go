@@ -33,14 +33,14 @@ type usageTarget struct {
 // collectUsage 拉取所有已选认证文件的额度，按 provider 分组返回。
 func (a *app) collectUsage() []usageEntry {
 	cfg, _, _ := a.snapshot()
-	if len(cfg.AuthIDs) == 0 {
+	if len(cfg.UsageAuthIDs) == 0 {
 		return nil
 	}
 	auths, err := callHostAuthList()
 	if err != nil {
 		return []usageEntry{{Err: err.Error()}}
 	}
-	targets := collectUsageTargets(cfg.AuthIDs, auths)
+	targets := collectUsageTargets(cfg.UsageAuthIDs, auths)
 	if len(targets) == 0 {
 		return nil
 	}
@@ -84,7 +84,7 @@ func collectUsageTargets(authIDs []string, auths []pluginapi.HostAuthFileEntry) 
 				Provider:  provider,
 				Email:     auth.Email,
 			})
-		case "claude":
+		case "claude", "devin":
 			targets = append(targets, usageTarget{
 				AuthID:    id,
 				AuthIndex: strings.TrimSpace(auth.AuthIndex),
@@ -134,6 +134,8 @@ func fetchUsageTarget(target usageTarget) usageEntry {
 		return fetchCodexUsage(target.AuthID, target.AuthIndex, target.Email)
 	case "claude":
 		return fetchClaudeUsage(target.AuthID, target.AuthIndex, target.Email)
+	case "devin":
+		return fetchDevinUsage(target.AuthID, target.AuthIndex, target.Email)
 	default:
 		return usageEntry{AuthID: target.AuthID, Provider: target.Provider, Email: target.Email, Err: "unsupported provider"}
 	}
@@ -154,6 +156,9 @@ func authEntrySelected(selected map[string]bool, entry pluginapi.HostAuthFileEnt
 func classifyProvider(provider, typ string) string {
 	p := strings.ToLower(strings.TrimSpace(provider))
 	t := strings.ToLower(strings.TrimSpace(typ))
+	if p == "devin" || t == "devin" {
+		return "devin"
+	}
 	if p == "codex" || t == "codex" || p == "openai" || t == "openai" {
 		return "codex"
 	}
@@ -191,6 +196,9 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 		}
 		primary := e.Primary
 		secondary := e.Secondary
+		if e.Provider == "devin" {
+			primary = e.Daily
+		}
 		if sonnet {
 			if e.HasSonnet {
 				primary = e.SonnetPrimary
@@ -276,19 +284,28 @@ func buildUsageMessage(entries []usageEntry) string {
 		b.WriteString("\n**CLAUDE**\n")
 		writeGroup(&b, aggregateGroup(claude, false))
 	}
-	if len(codex) == 0 && len(claude) == 0 {
+	devin := filterProvider(entries, "devin")
+	if len(devin) > 0 {
+		b.WriteString("\n**DEVIN**\n")
+		writeGroupWithLabel(&b, aggregateGroup(devin, false), "日限额")
+	}
+	if len(codex) == 0 && len(claude) == 0 && len(devin) == 0 {
 		b.WriteString("\n> <font color=\"comment\">暂无额度数据，请先选择认证文件</font>\n")
 	}
 	return b.String()
 }
 
 func writeGroup(b *strings.Builder, agg aggregateResult) {
+	writeGroupWithLabel(b, agg, "5小时限额")
+}
+
+func writeGroupWithLabel(b *strings.Builder, agg aggregateResult, primaryLabel string) {
 	if !agg.HasData {
 		b.WriteString("> <font color=\"comment\">暂无额度数据</font>\n")
 		return
 	}
 	if agg.HasPrimary {
-		writeUsageLine(b, "5小时限额", agg.PrimaryPercent, agg.PrimaryReset)
+		writeUsageLine(b, primaryLabel, agg.PrimaryPercent, agg.PrimaryReset)
 	}
 	if agg.HasSecondary {
 		writeUsageLine(b, "周限额", agg.SecondaryPercent, agg.SecondaryReset)
@@ -512,6 +529,9 @@ func (a *app) usageSnapshot() usageSnapshotView {
 	if claude := filterProvider(entries, "claude"); len(claude) > 0 {
 		view.Groups = append(view.Groups, groupView("claude", "CLAUDE", aggregateGroup(claude, false)))
 	}
+	if devin := filterProvider(entries, "devin"); len(devin) > 0 {
+		view.Groups = append(view.Groups, groupView("devin", "DEVIN", aggregateGroup(devin, false)))
+	}
 	for _, e := range entries {
 		if e.Err != "" {
 			label := e.Email
@@ -554,7 +574,11 @@ func groupViewWithExtra(provider, label string, agg aggregateResult, extra []usa
 	}
 	if agg.HasData {
 		if agg.HasPrimary {
-			view.Lines = append(view.Lines, usageMetricView{Label: "5小时限额", Percent: agg.PrimaryPercent, Reset: resetText(agg.PrimaryReset)})
+			label := "5小时限额"
+			if provider == "devin" {
+				label = "日限额"
+			}
+			view.Lines = append(view.Lines, usageMetricView{Label: label, Percent: agg.PrimaryPercent, Reset: resetText(agg.PrimaryReset)})
 		}
 		if agg.HasSecondary {
 			view.Lines = append(view.Lines, usageMetricView{Label: "周限额", Percent: agg.SecondaryPercent, Reset: resetText(agg.SecondaryReset)})

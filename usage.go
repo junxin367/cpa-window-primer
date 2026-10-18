@@ -21,12 +21,13 @@ type usageWindow struct {
 // usageEntry 表示单个认证文件的额度结果。
 type usageEntry struct {
 	AuthID    string
-	Provider  string // codex / claude
+	Provider  string // codex / claude / devin
 	Email     string
 	Plan      string      // 原始套餐字符串
 	Weight    float64     // 套餐倍数（相对基准单位）
 	Primary   usageWindow // 归一化后的 5 小时窗口，不等同于上游 primary_window。
 	Secondary usageWindow // 归一化后的周窗口，不等同于上游 secondary_window。
+	Daily     usageWindow // Devin 日额度，独立于 5 小时窗口。
 	// Sonnet 为 Claude 单独统计的窗口（如有）。
 	SonnetPrimary   usageWindow
 	SonnetSecondary usageWindow
@@ -260,6 +261,8 @@ func fetchAuthUsage(entry pluginapi.HostAuthFileEntry) usageEntry {
 		return fetchCodexUsage(authID, authIndex, entry.Email)
 	case "claude":
 		return fetchClaudeUsage(authID, authIndex, entry.Email)
+	case "devin":
+		return fetchDevinUsage(authID, authIndex, entry.Email)
 	default:
 		return usageEntry{AuthID: authID, Err: "unsupported provider"}
 	}
@@ -273,6 +276,9 @@ func usageQuotaBlocked(entry usageEntry, models []string, now time.Time) usageQu
 		return block
 	}
 	if block := quotaBlockForWindow(entry.Primary, "5小时额度已满", now); block.Blocked {
+		return block
+	}
+	if block := quotaBlockForWindow(entry.Daily, "日额度已满", now); block.Blocked {
 		return block
 	}
 	if entry.HasSonnet && modelListContains(models, "sonnet") {

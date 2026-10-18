@@ -67,7 +67,7 @@ func (a *app) configure(raw []byte) error {
 	a.cfg = cfg
 	a.state = state
 	a.lastError = ""
-	if cfg.Enabled {
+	if cfg.Enabled || cfg.UsagePushEnabled {
 		a.startWorkerLocked()
 	}
 	return nil
@@ -415,7 +415,8 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 			break
 		}
 		quotaBlocked := isWarmupQuotaBlocked(target.Provider, record.StatusCode, resp.Headers, resp.Body, err)
-		modelUnavailable := isWarmupModelUnavailable(record.StatusCode, resp.Body, err)
+		modelUnavailable := isWarmupModelUnavailable(record.StatusCode, resp.Body, err) ||
+			(target.Provider == "devin" && isTargetAuthNotCandidate(err))
 		if quotaBlocked || targetVerifyFailed || (!modelUnavailable && !targetNotUsed) || idx == len(models)-1 {
 			break
 		}
@@ -530,7 +531,7 @@ func (a *app) reconcileQuotaBlockFromUsage(authID, windowKey string, cfg runtime
 	if modelText == "" {
 		modelText = cfg.Model
 	}
-	if usage.Err != "" || (!usage.Primary.HasData && !usage.Secondary.HasData) {
+	if usage.Err != "" || (!usage.Primary.HasData && !usage.Secondary.HasData && !usage.Daily.HasData) {
 		a.mu.Lock()
 		until, reason, blocked := a.state.quotaBlockInfo(authID, now)
 		if !blocked {
@@ -685,7 +686,7 @@ func (a *app) updateConfigFromBody(raw []byte) (runtimeConfig, error) {
 	if err != nil {
 		return runtimeConfig{}, err
 	}
-	if err := validateConfigForSave(cfg); err != nil {
+	if err := validateConfigPatchForSave(cfg, raw); err != nil {
 		return runtimeConfig{}, err
 	}
 	normalized, err := normalizeConfig(cfg)
@@ -703,7 +704,7 @@ func (a *app) updateConfigFromBody(raw []byte) (runtimeConfig, error) {
 	a.stopWorkerLocked()
 	a.cfg = normalized
 	a.state = state
-	if normalized.Enabled {
+	if normalized.Enabled || normalized.UsagePushEnabled {
 		a.startWorkerLocked()
 	}
 	a.mu.Unlock()

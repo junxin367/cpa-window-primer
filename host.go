@@ -563,6 +563,9 @@ func isManagedOAuthAuth(entry pluginapi.HostAuthFileEntry) bool {
 	provider := strings.ToLower(strings.TrimSpace(entry.Provider))
 	typ := strings.ToLower(strings.TrimSpace(entry.Type))
 	name := strings.ToLower(strings.TrimSpace(entry.Name))
+	if provider == "devin" || typ == "devin" {
+		return true
+	}
 	if provider == "codex" || typ == "codex" {
 		return true
 	}
@@ -693,6 +696,10 @@ func warmupModelCandidates(cfg runtimeConfig, authID string) []string {
 }
 
 func modelMatchesProvider(model, provider string) bool {
+	// Devin 可代理不同模型家族；实际可用性仍由指定凭证的宿主调度确认。
+	if provider == "devin" {
+		return strings.TrimSpace(model) != "" && !strings.Contains(strings.ToLower(model), "image")
+	}
 	if provider == "" {
 		return true
 	}
@@ -765,6 +772,9 @@ func chooseFallbackModel(provider string, models []availableModel) string {
 func modelMatchesAvailableProvider(model availableModel, provider string) bool {
 	if strings.Contains(strings.ToLower(model.ID), "image") {
 		return false
+	}
+	if provider == "devin" {
+		return strings.EqualFold(model.Owner, "devin") || strings.EqualFold(model.RawType, "devin")
 	}
 	if provider == "" {
 		return strings.TrimSpace(model.ID) != ""

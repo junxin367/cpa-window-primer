@@ -495,6 +495,11 @@ func (a *app) renderStatusPage() []byte {
       .cwp-actions button { width: 100%; }
     }
   </style>
+  <style>
+    [hidden] { display: none !important; }
+    .cwp-breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+    .cwp-breadcrumb button { padding: 6px 10px; }
+  </style>
 </head>
 <body class="cwp-body">
   <main class="cwp-page">
@@ -507,7 +512,39 @@ func (a *app) renderStatusPage() []byte {
     </header>
     <div class="cwp-layout">
       <div class="cwp-main">
+
         <section class="cwp-panel">
+          <nav class="cwp-breadcrumb" aria-label="凭证配置导航">
+            <span>凭证配置</span><span aria-hidden="true">/</span>
+            <button id="warmupTab" type="button" aria-current="page">预热设置</button>
+            <span aria-hidden="true">/</span>
+            <button id="usageTab" type="button" class="cwp-secondary">额度推送设置</button>
+          </nav>
+          <h2 id="authSectionTitle">预热凭证</h2>
+          <p class="cwp-muted" id="authSelectionHelp">选择参与定时预热的 CPA 凭证，与额度推送独立保存。</p>
+          <div class="cwp-actions" style="margin-bottom: 9px;">
+            <button id="batchWarmup" type="button" class="cwp-secondary">批量预热</button>
+            <button id="selectAllAuths" type="button" class="cwp-secondary">全选</button>
+            <button id="clearAuths" type="button" class="cwp-secondary">清空选择</button>
+          </div>
+          <div class="cwp-table-wrap">
+            <table class="cwp-table">
+              <thead>
+                <tr>
+                  <th>选择</th>
+                  <th>认证文件</th>
+                  <th>账号</th>
+                  <th>状态</th>
+                  <th data-warmup-column>最近成功</th>
+                  <th data-warmup-column>最近预热</th>
+                  <th data-warmup-column>操作</th>
+                </tr>
+              </thead>
+              <tbody id="authRows"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="cwp-panel" id="warmupSettings">
           <h2>预热设置</h2>
           <div class="cwp-fields">
             <label class="cwp-inline">
@@ -543,50 +580,7 @@ func (a *app) renderStatusPage() []byte {
             </div>
           </div>
         </section>
-        <section class="cwp-panel">
-          <h2>认证文件</h2>
-          <div class="cwp-actions" style="margin-bottom: 9px;">
-            <button id="batchWarmup" type="button" class="cwp-secondary">批量预热</button>
-            <button id="selectAllAuths" type="button" class="cwp-secondary">全选</button>
-            <button id="clearAuths" type="button" class="cwp-secondary">清空选择</button>
-          </div>
-          <div class="cwp-table-wrap">
-            <table class="cwp-table">
-              <thead>
-                <tr>
-                  <th>选择</th>
-                  <th>认证文件</th>
-                  <th>账号</th>
-                  <th>状态</th>
-                  <th>最近成功</th>
-                  <th>最近预热</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody id="authRows"></tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-      <div class="cwp-side">
-        <section class="cwp-panel">
-          <h2>连接</h2>
-          <div class="cwp-fields">
-            <label><span>CPA 管理密钥</span>
-              <input id="managementKey" type="password" autocomplete="off" spellcheck="false">
-            </label>
-            <p class="cwp-muted">刷新状态、保存配置和手动预热需要 CPA 管理密钥。已保存的后台预热不依赖本页面持续打开；密钥会保存在浏览器本地，不会写入插件配置。</p>
-            <div class="cwp-actions">
-              <button id="saveConfig" type="button">保存配置</button>
-              <button id="refreshSnapshot" type="button" class="cwp-secondary">刷新状态</button>
-            </div>
-          </div>
-        </section>
-        <section class="cwp-panel">
-          <h2>运行概览</h2>
-          <div class="cwp-summary" id="overview"></div>
-        </section>
-        <section class="cwp-panel">
+        <section class="cwp-panel" id="usageSettings" hidden>
           <h2>额度推送</h2>
           <div class="cwp-fields">
             <label class="cwp-inline">
@@ -602,7 +596,7 @@ func (a *app) renderStatusPage() []byte {
               <div class="cwp-actions" style="margin-top: 9px;">
                 <button id="addPushTime" type="button" class="cwp-secondary">添加时间</button>
               </div>
-              <p class="cwp-muted">汇总已选 Codex / Claude 认证文件的 5 小时与周限额，仅工作日到点推送到 webhook。</p>
+              <p class="cwp-muted">按额度推送凭证汇总 GPT / Claude 实际窗口和 Devin 日 / 周限额，仅工作日到点推送。预览和立即推送使用已保存的额度设置。</p>
             </div>
             <div class="cwp-actions">
               <button id="refreshUsage" type="button" class="cwp-secondary">预览额度</button>
@@ -611,6 +605,26 @@ func (a *app) renderStatusPage() []byte {
             <div class="cwp-summary" id="usagePreview"></div>
           </div>
         </section>
+      </div>
+      <div class="cwp-side">
+        <section class="cwp-panel">
+          <h2>连接</h2>
+          <div class="cwp-fields">
+            <label><span>CPA 管理密钥</span>
+              <input id="managementKey" type="password" autocomplete="off" spellcheck="false">
+            </label>
+            <p class="cwp-muted">刷新状态、保存配置和手动预热需要 CPA 管理密钥。已保存的后台预热不依赖本页面持续打开；密钥会保存在浏览器本地，不会写入插件配置。</p>
+            <div class="cwp-actions">
+              <button id="saveConfig" type="button">保存预热设置</button>
+              <button id="refreshSnapshot" type="button" class="cwp-secondary">刷新状态</button>
+            </div>
+          </div>
+        </section>
+        <section class="cwp-panel">
+          <h2>运行概览</h2>
+          <div class="cwp-summary" id="overview"></div>
+        </section>
+
       </div>
     </div>
   </main>
@@ -630,7 +644,7 @@ func (a *app) renderStatusPage() []byte {
       usagePush: '/v0/management/cpa-window-primer/usage-push'
     };
     const MANAGEMENT_KEY_STORAGE = 'cpa-window-primer.management-key';
-    const state = { snapshot: normalizeSnapshot(INITIAL_DATA) };
+    const state = { snapshot: normalizeSnapshot(INITIAL_DATA), activeSettings: 'warmup' };
 
     function normalizeSnapshot(input) {
       const data = input || {};
@@ -639,6 +653,7 @@ func (a *app) renderStatusPage() []byte {
         config: {
           enabled: config.enabled !== false,
           auth_ids: Array.isArray(config.auth_ids) ? config.auth_ids : [],
+          usage_auth_ids: Array.isArray(config.usage_auth_ids) ? config.usage_auth_ids : (Array.isArray(config.auth_ids) ? config.auth_ids.slice() : []),
           times: Array.isArray(config.times) && config.times.length ? config.times : DEFAULT_TIMES.slice(),
           model: config.model || DEFAULT_MODEL,
           prompt: config.prompt || 'hi',
@@ -660,7 +675,37 @@ func (a *app) renderStatusPage() []byte {
     }
 
     function selectedSet() {
-      return new Set(state.snapshot.config.auth_ids || []);
+      return new Set(state.snapshot.config[activeAuthKey()] || []);
+    }
+
+    function activeAuthKey() {
+      return state.activeSettings === 'usage' ? 'usage_auth_ids' : 'auth_ids';
+    }
+
+    function switchSettings(section) {
+      state.activeSettings = section;
+      renderSettingsNavigation();
+      renderAuths();
+      renderOverview();
+    }
+
+    function renderSettingsNavigation() {
+      const usage = state.activeSettings === 'usage';
+      field('warmupSettings').hidden = usage;
+      field('usageSettings').hidden = !usage;
+      field('batchWarmup').hidden = usage;
+      field('authSectionTitle').textContent = usage ? '额度推送凭证' : '预热凭证';
+      field('authSelectionHelp').textContent = usage
+        ? '选择参与额度预览和推送的 CPA 凭证，不影响预热选择。支持 Codex / Claude / Devin。'
+        : '选择参与定时预热的 CPA 凭证，与额度推送独立保存。支持 Codex / Claude / Devin。';
+      field('saveConfig').textContent = usage ? '保存额度推送设置' : '保存预热设置';
+      for (const section of ['warmup', 'usage']) {
+        const button = field(section + 'Tab');
+        button.className = section === state.activeSettings ? '' : 'cwp-secondary';
+        if (section === state.activeSettings) button.setAttribute('aria-current', 'page');
+        else button.removeAttribute('aria-current');
+      }
+      for (const cell of document.querySelectorAll('[data-warmup-column]')) cell.hidden = usage;
     }
 
     function loadStoredManagementKey() {
@@ -912,14 +957,17 @@ func (a *app) renderStatusPage() []byte {
       const config = state.snapshot.config;
       const selectableIDs = new Set((state.snapshot.auths || []).filter((auth) => auth.selectable !== false).map((auth) => auth.id));
       const selectedCount = (config.auth_ids || []).filter((id) => selectableIDs.has(id)).length;
-      field('enabledMetric').textContent = config.enabled ? '后台已启用' : '后台已停用';
-      field('selectedMetric').textContent = selectedCount + ' 个认证文件';
+      const usageCount = (config.usage_auth_ids || []).filter((id) => selectableIDs.has(id)).length;
+      field('enabledMetric').textContent = '预热' + (config.enabled ? '已启用' : '已停用') + ' · 额度推送' + (config.usage_push_enabled ? '已启用' : '已停用');
+      field('selectedMetric').textContent = '预热 ' + selectedCount + ' / 额度 ' + usageCount;
       const rows = [
         ['可管理认证文件', state.snapshot.auths.length + ' 个'],
-        ['已选择认证文件', selectedCount + ' 个'],
+        ['预热凭证', selectedCount + ' 个'],
+        ['额度推送凭证', usageCount + ' 个'],
         ['发送窗口', (config.times || []).join(' / ') || '未配置'],
         ['预热模型', config.model || DEFAULT_MODEL],
-        ['最小间隔', config.min_interval || '5h']
+        ['最小间隔', config.min_interval || '5h'],
+        ['额度推送时间', (config.usage_push_times || []).join(' / ') || '未配置']
       ];
       if (state.snapshot.last_error) {
         rows.push(['最近错误', state.snapshot.last_error]);
@@ -939,18 +987,22 @@ func (a *app) renderStatusPage() []byte {
       }
     }
 
-    function renderForm() {
+    function renderForm(section) {
       const config = state.snapshot.config;
-      field('enabled').checked = config.enabled !== false;
-      field('model').value = config.model || DEFAULT_MODEL;
-      field('prompt').value = config.prompt || 'hi';
-      field('minInterval').value = config.min_interval || '5h';
-      field('leadTime').value = config.lead_time || '1m';
-      field('tickInterval').value = config.tick_interval || '5s';
-      renderTimes(config.times || DEFAULT_TIMES);
-      field('webhookUrl').value = config.webhook_url || '';
-      field('usagePushEnabled').checked = config.usage_push_enabled === true;
-      renderPushTimes(config.usage_push_times || DEFAULT_PUSH_TIMES);
+      if (!section || section === 'warmup') {
+        field('enabled').checked = config.enabled !== false;
+        field('model').value = config.model || DEFAULT_MODEL;
+        field('prompt').value = config.prompt || 'hi';
+        field('minInterval').value = config.min_interval || '5h';
+        field('leadTime').value = config.lead_time || '1m';
+        field('tickInterval').value = config.tick_interval || '5s';
+        renderTimes(config.times || DEFAULT_TIMES);
+      }
+      if (!section || section === 'usage') {
+        field('webhookUrl').value = config.webhook_url || '';
+        field('usagePushEnabled').checked = config.usage_push_enabled === true;
+        renderPushTimes(config.usage_push_times || DEFAULT_PUSH_TIMES);
+      }
     }
 
     function renderTimes(times) {
@@ -1003,7 +1055,8 @@ func (a *app) renderStatusPage() []byte {
     function collectConfig() {
       return {
         enabled: field('enabled').checked,
-        auth_ids: collectAuthIDs(),
+        auth_ids: (state.snapshot.config.auth_ids || []).slice(),
+        usage_auth_ids: (state.snapshot.config.usage_auth_ids || []).slice(),
         times: collectTimes(),
         model: field('model').value.trim() || DEFAULT_MODEL,
         prompt: field('prompt').value.trim() || 'hi',
@@ -1018,14 +1071,16 @@ func (a *app) renderStatusPage() []byte {
 
     function validateConfigBeforeSave(config) {
       const missing = [];
-      if (!config.auth_ids.length) missing.push('认证文件');
-      if (!config.times.length) missing.push('发送窗口');
-      if (!config.model) missing.push('模型');
-      if (!config.prompt) missing.push('预热内容');
-      if (!config.min_interval) missing.push('最小间隔');
-      if (!config.lead_time) missing.push('提前触发窗口');
-      if (!config.tick_interval) missing.push('后台检查间隔');
-      if (config.usage_push_enabled) {
+      if (state.activeSettings === 'warmup') {
+        if (config.enabled && !config.auth_ids.length) missing.push('预热认证文件');
+        if (!config.times.length) missing.push('发送窗口');
+        if (!config.model) missing.push('模型');
+        if (!config.prompt) missing.push('预热内容');
+        if (!config.min_interval) missing.push('最小间隔');
+        if (!config.lead_time) missing.push('提前触发窗口');
+        if (!config.tick_interval) missing.push('后台检查间隔');
+      } else if (config.usage_push_enabled) {
+        if (!config.usage_auth_ids.length) missing.push('额度推送认证文件');
         if (!config.webhook_url) missing.push('企微 / Webhook 地址');
         if (!config.usage_push_times.length) missing.push('推送时间');
       }
@@ -1041,8 +1096,8 @@ func (a *app) renderStatusPage() []byte {
       const authState = (state.snapshot.state && state.snapshot.state.auths) || {};
       if (!state.snapshot.auths.length) {
         const tr = document.createElement('tr');
-        const td = createCell('没有找到可管理的 Codex / OpenAI / Claude / Anthropic 认证文件。');
-        td.colSpan = 7;
+        const td = createCell('没有找到可管理的 Codex / OpenAI / Claude / Anthropic / Devin 凭证，请先在 CPA 中添加。');
+        td.colSpan = state.activeSettings === 'usage' ? 4 : 7;
         tr.appendChild(td);
         body.appendChild(tr);
         return;
@@ -1059,7 +1114,7 @@ func (a *app) renderStatusPage() []byte {
         check.disabled = !selectable;
         check.checked = selectable && selected.has(auth.id);
         check.addEventListener('change', () => {
-          state.snapshot.config.auth_ids = collectAuthIDs();
+          state.snapshot.config[activeAuthKey()] = collectAuthIDs();
           renderOverview();
         });
         selectTd.appendChild(check);
@@ -1104,8 +1159,11 @@ func (a *app) renderStatusPage() []byte {
           statusTd.appendChild(detail);
         }
         tr.appendChild(statusTd);
-        tr.appendChild(createCell(formatTime(itemState.last_success_at)));
+        const successTd = createCell(formatTime(itemState.last_success_at));
+        successTd.hidden = state.activeSettings === 'usage';
+        tr.appendChild(successTd);
         const attemptTd = document.createElement('td');
+        attemptTd.hidden = state.activeSettings === 'usage';
         const attemptLine = document.createElement('div');
         attemptLine.textContent = attemptText(itemState.last_attempt);
         if (itemState.last_attempt) {
@@ -1120,6 +1178,7 @@ func (a *app) renderStatusPage() []byte {
         tr.appendChild(attemptTd);
 
         const actionTd = document.createElement('td');
+        actionTd.hidden = state.activeSettings === 'usage';
         const run = document.createElement('button');
         run.type = 'button';
         run.className = 'cwp-secondary';
@@ -1133,6 +1192,7 @@ func (a *app) renderStatusPage() []byte {
     }
 
     function renderAll() {
+      renderSettingsNavigation();
       renderOverview();
       renderForm();
       renderAuths();
@@ -1155,7 +1215,7 @@ func (a *app) renderStatusPage() []byte {
         const data = await readJSON(response);
         if (!response.ok) throw new Error(formatError(data, '刷新状态失败'));
         const next = normalizeSnapshot(data);
-        if (preserveForm) next.config = state.snapshot.config;
+        if (preserveForm) next.config = collectConfig();
         state.snapshot = next;
         if (preserveForm) {
           renderOverview();
@@ -1196,7 +1256,7 @@ func (a *app) renderStatusPage() []byte {
         empty.className = 'cwp-muted';
         empty.textContent = data && Array.isArray(data.errors) && data.errors.length
           ? '额度读取失败，请检查认证文件或 CPA 管理密钥。'
-          : '暂无额度数据，请先选择 Codex / Claude 认证文件。';
+          : '暂无额度数据，请先保存额度推送凭证（Codex / Claude / Devin）。';
         box.appendChild(empty);
         renderUsageErrors(box, data && data.errors);
         return;
@@ -1212,7 +1272,7 @@ func (a *app) renderStatusPage() []byte {
         box.appendChild(title);
         if (g.has_data) {
           const lines = Array.isArray(g.lines) ? g.lines : [
-            ...(g.has_primary ? [{ label: '5小时限额', percent: g.primary_percent, reset: g.primary_reset }] : []),
+            ...(g.has_primary ? [{ label: g.provider === 'devin' ? '日限额' : '5小时限额', percent: g.primary_percent, reset: g.primary_reset }] : []),
             ...(g.has_secondary ? [{ label: '周限额', percent: g.secondary_percent, reset: g.secondary_reset }] : [])
           ];
           for (const line of lines) {
@@ -1269,21 +1329,34 @@ func (a *app) renderStatusPage() []byte {
       }
     }
 
+    function configForSection(config, section) {
+      const keys = section === 'usage'
+        ? ['usage_auth_ids', 'usage_push_enabled', 'usage_push_times', 'webhook_url']
+        : ['enabled', 'auth_ids', 'times', 'model', 'prompt', 'min_interval', 'lead_time', 'tick_interval'];
+      return Object.fromEntries(keys.map((key) => [key, config[key]]));
+    }
+
     async function saveConfig() {
       clearStatus();
       try {
         const next = collectConfig();
         validateConfigBeforeSave(next);
+        const section = state.activeSettings;
         const response = await fetch(ENDPOINTS.config, {
           method: 'PUT',
           headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-          body: JSON.stringify(next)
+          body: JSON.stringify(configForSection(next, section))
         });
         const data = await readJSON(response);
         if (!response.ok) throw new Error(formatError(data, '保存配置失败'));
-        state.snapshot.config = normalizeSnapshot({ config: data }).config;
-        renderAll();
-        setStatus('配置已保存，后台调度已按新配置重新加载。');
+        const otherDraft = configForSection(collectConfig(), section === 'usage' ? 'warmup' : 'usage');
+        state.snapshot.config = { ...normalizeSnapshot({ config: data }).config, ...otherDraft };
+        renderForm(section);
+        renderSettingsNavigation();
+        renderOverview();
+        renderAuths();
+        if (section === 'usage') field('usagePreview').textContent = '设置已更新，请重新预览额度。';
+        setStatus((section === 'usage' ? '额度推送' : '预热') + '设置已保存。');
       } catch (error) {
         if (error.connectionStatus) return;
         setStatus(error.message || String(error), true);
@@ -1371,7 +1444,7 @@ func (a *app) renderStatusPage() []byte {
           tasks.push(worker());
         }
         await Promise.all(tasks);
-        await refreshSnapshot(false);
+        await refreshSnapshot(false, true);
         if (failures.length) {
           const preview = failures.slice(0, 2).join('；');
           const suffix = failures.length > 2 ? ' 等 ' + failures.length + ' 个失败' : '';
@@ -1388,6 +1461,8 @@ func (a *app) renderStatusPage() []byte {
     }
 
     field('saveConfig').addEventListener('click', saveConfig);
+    field('warmupTab').addEventListener('click', () => switchSettings('warmup'));
+    field('usageTab').addEventListener('click', () => switchSettings('usage'));
     field('refreshSnapshot').addEventListener('click', refreshSnapshot);
     field('managementKey').addEventListener('input', () => {
       saveStoredManagementKey(field('managementKey').value.trim());
@@ -1401,12 +1476,12 @@ func (a *app) renderStatusPage() []byte {
     field('batchWarmup').addEventListener('click', runBatchWarmup);
     field('selectAllAuths').addEventListener('click', () => {
       for (const item of document.querySelectorAll('.cwp-auth-check:not(:disabled)')) item.checked = true;
-      state.snapshot.config.auth_ids = collectAuthIDs();
+      state.snapshot.config[activeAuthKey()] = collectAuthIDs();
       renderOverview();
     });
     field('clearAuths').addEventListener('click', () => {
       for (const item of document.querySelectorAll('.cwp-auth-check')) item.checked = false;
-      state.snapshot.config.auth_ids = [];
+      state.snapshot.config[activeAuthKey()] = [];
       renderOverview();
     });
     restoreManagementKey();
