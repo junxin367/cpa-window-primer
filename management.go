@@ -406,6 +406,30 @@ func (a *app) renderStatusPage() []byte {
     .cwp-summary { display: grid; gap: 8px; }
     .cwp-summary-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
     .cwp-summary-row strong { font-weight: 720; }
+    .cwp-usage-message {
+      overflow-x: auto;
+      padding: 12px;
+      border: 1px solid color-mix(in srgb, CanvasText 14%, Canvas 86%);
+      border-radius: 6px;
+      background: Canvas;
+      font-size: 13px;
+      line-height: 1.8;
+    }
+    .cwp-usage-message h3 { margin: 0 0 6px; font-size: 16px; }
+    .cwp-usage-group { margin-top: 12px; font-weight: 720; }
+    .cwp-usage-quote {
+      border-left: 3px solid color-mix(in srgb, CanvasText 16%, Canvas 84%);
+      padding-left: 10px;
+      white-space: nowrap;
+    }
+    .cwp-page .cwp-usage-message code {
+      font-size: 12px;
+      white-space: pre;
+      overflow-wrap: normal;
+    }
+    .cwp-usage-info { color: #16a34a; }
+    .cwp-usage-comment { color: color-mix(in srgb, CanvasText 62%, Canvas 38%); }
+    .cwp-usage-warning { color: #d97706; }
     .cwp-time-list { display: grid; gap: 8px; }
     .cwp-time-row { display: grid; grid-template-columns: minmax(0, 1fr) max-content; gap: 8px; align-items: center; min-width: 0; }
     .cwp-table-wrap {
@@ -1250,6 +1274,12 @@ func (a *app) renderStatusPage() []byte {
     function renderUsage(data) {
       const box = field('usagePreview');
       box.textContent = '';
+      // 使用服务端实际发送的消息预览，避免另算进度、百分比或重置时间。
+      if (data && typeof data.message === 'string' && data.message.trim()) {
+        box.appendChild(renderUsageMessage(data.message));
+        renderUsageErrors(box, data.errors);
+        return;
+      }
       const groups = (data && Array.isArray(data.groups)) ? data.groups : [];
       if (!groups.length) {
         const empty = document.createElement('div');
@@ -1281,6 +1311,54 @@ func (a *app) renderStatusPage() []byte {
         }
       }
       renderUsageErrors(box, data && data.errors);
+    }
+
+    function renderUsageMessage(message) {
+      const content = document.createElement('div');
+      content.className = 'cwp-usage-message';
+      content.setAttribute('aria-label', '额度推送消息预览');
+      for (const line of message.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        let text = line;
+        let row;
+        if (line.startsWith('# ')) {
+          row = document.createElement('h3');
+          text = line.slice(2);
+        } else if (line.startsWith('**') && line.endsWith('**')) {
+          row = document.createElement('div');
+          row.className = 'cwp-usage-group';
+          text = line.slice(2, -2);
+        } else {
+          row = document.createElement('div');
+          if (line.startsWith('> ')) {
+            row.className = 'cwp-usage-quote';
+            text = line.slice(2);
+          }
+        }
+        appendUsageMessageText(row, text);
+        content.appendChild(row);
+      }
+      return content;
+    }
+
+    function appendUsageMessageText(row, text) {
+      // 仅支持推送模板使用的等宽文本和企微颜色标签；其余内容作为纯文本。
+      // 不将接口响应交给 innerHTML，防止响应内容变成可执行 HTML。
+      const tokens = /\x60([^\x60]*)\x60|<font color="(info|comment|warning)">([^<]*)<\/font>/g;
+      let offset = 0;
+      for (const match of text.matchAll(tokens)) {
+        row.appendChild(document.createTextNode(text.slice(offset, match.index)));
+        const node = document.createElement(match[1] !== undefined ? 'code' : 'span');
+        if (match[1] !== undefined) {
+          node.textContent = match[1];
+        } else {
+          node.className = 'cwp-usage-' + match[2];
+          node.textContent = match[3];
+        }
+        row.appendChild(node);
+        offset = match.index + match[0].length;
+      }
+      row.appendChild(document.createTextNode(text.slice(offset)));
     }
 
     function renderUsageErrors(box, errors) {

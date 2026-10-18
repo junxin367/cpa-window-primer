@@ -314,6 +314,28 @@ func TestBuildUsageMessageOmitsReadErrors(t *testing.T) {
 	}
 }
 
+func TestBuildUsageMessagePreservesLegacyPresentation(t *testing.T) {
+	reset := time.Date(2026, 10, 25, 3, 13, 0, 0, time.UTC)
+	message := buildUsageMessage([]usageEntry{
+		{Provider: "codex", Weight: 1, Secondary: usageWindow{HasData: true, UsedPercent: 15, ResetAt: reset}},
+		{Provider: "claude", Weight: 1, Primary: usageWindow{HasData: true, UsedPercent: 70, ResetAt: reset},
+			Secondary: usageWindow{HasData: true, UsedPercent: 95, ResetAt: reset}},
+		{Provider: "devin", Plan: "Max", Weight: 1, Secondary: usageWindow{HasData: true, UsedPercent: 40, ResetAt: reset}},
+	})
+	// 固定旧模板的分组、10 格进度条、标签填充、企微颜色与上海时区重置文案。
+	want := "\n**GPT**\n" +
+		"> `周限额       █████████░` <font color=\"info\">85%</font> <font color=\"comment\">10/25 11:13 重置</font>\n" +
+		"\n**CLAUDE**\n" +
+		"> `5小时限额    ███░░░░░░░` <font color=\"comment\">30%</font> <font color=\"comment\">10/25 11:13 重置</font>\n" +
+		"> `周限额       █░░░░░░░░░` <font color=\"warning\">5%</font> <font color=\"comment\">10/25 11:13 重置</font>\n" +
+		"\n**DEVIN**\n" +
+		"> `周限额       ██████░░░░` <font color=\"info\">60%</font> <font color=\"comment\">10/25 11:13 重置</font>\n"
+	lines := strings.SplitN(message, "\n", 3)
+	if len(lines) != 3 || lines[0] != "# 额度汇总" || !strings.HasPrefix(lines[1], "> 更新时间：") || lines[2] != want {
+		t.Fatalf("unexpected message format:\n%s", message)
+	}
+}
+
 func TestResetTextUsesShanghaiTime(t *testing.T) {
 	utcReset := time.Date(2026, 6, 30, 2, 0, 0, 0, time.UTC)
 	if got := resetText(utcReset); got != "06/30 10:00" {
