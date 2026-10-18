@@ -1314,6 +1314,11 @@ func (a *app) renderStatusPage() []byte {
     }
 
     function renderUsageMessage(message) {
+      // CPA 宿主会对管理 API 的 JSON 字符串执行 HTML 转义。
+      // 仅解码一层，再交给下方有限格式解析器；最终内容仍通过 textContent 写入。
+      const entities = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#34': '"', '#39': "'", '#x22': '"', '#x27': "'" };
+      message = message.replace(/&(amp|lt|gt|quot|apos|#34|#39|#x22|#x27);/gi,
+        (_, name) => entities[name.toLowerCase()]);
       const content = document.createElement('div');
       content.className = 'cwp-usage-message';
       content.setAttribute('aria-label', '额度推送消息预览');
