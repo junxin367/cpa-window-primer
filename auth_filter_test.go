@@ -142,6 +142,7 @@ func TestFormatAuthType(t *testing.T) {
 	}
 }
 func TestWarmupModelAutoRecognition(t *testing.T) {
+	withHostRPC(t, func(string, any) (json.RawMessage, error) { return nil, fmt.Errorf("no models") })
 	cfg := runtimeConfig{
 		pluginConfig: pluginConfig{
 			Model: "gpt-6-luna, claude-sonnet-4-6",
