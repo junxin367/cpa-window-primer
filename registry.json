@@ -6,7 +6,7 @@
       "name": "CPA Window Primer",
       "description": "通过中文管理页选择各类凭证（如 Codex、Devin、Kimi 等），分别配置定时预热和额度推送。",
       "author": "junxin367",
-      "version": "0.2.28",
+      "version": "0.2.29",
       "repository": "https://github.com/junxin367/cpa-window-primer",
       "homepage": "https://github.com/junxin367/cpa-window-primer",
       "tags": ["scheduler", "management", "oauth", "openai", "claude", "devin", "kimi"]

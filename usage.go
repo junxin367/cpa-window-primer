@@ -256,15 +256,21 @@ func fetchAuthUsage(entry pluginapi.HostAuthFileEntry) usageEntry {
 	if authIndex == "" {
 		authIndex = authID
 	}
-	switch classifyProvider(entry.Provider, entry.Type) {
+	typ := formatAuthType(entry)
+	if typ == "" || typ == "other" {
+		typ = classifyProvider(entry.Provider, entry.Type)
+	}
+	switch typ {
 	case "codex":
 		return fetchCodexUsage(authID, authIndex, entry.Email)
 	case "claude":
 		return fetchClaudeUsage(authID, authIndex, entry.Email)
 	case "devin":
 		return fetchDevinUsage(authID, authIndex, entry.Email)
+	case "kimi":
+		return fetchKimiUsage(authID, authIndex, entry.Email)
 	default:
-		return usageEntry{AuthID: authID, Err: "unsupported provider"}
+		return usageEntry{AuthID: authID, Provider: typ, Err: "unsupported provider"}
 	}
 }
 

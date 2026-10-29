@@ -75,23 +75,19 @@ func collectUsageTargets(authIDs []string, auths []pluginapi.HostAuthFileEntry) 
 		if auth.Disabled {
 			continue
 		}
-		provider := classifyProvider(auth.Provider, auth.Type)
-		switch provider {
-		case "codex":
-			targets = append(targets, usageTarget{
-				AuthID:    id,
-				AuthIndex: strings.TrimSpace(auth.AuthIndex),
-				Provider:  provider,
-				Email:     auth.Email,
-			})
-		case "claude", "devin":
-			targets = append(targets, usageTarget{
-				AuthID:    id,
-				AuthIndex: strings.TrimSpace(auth.AuthIndex),
-				Provider:  provider,
-				Email:     auth.Email,
-			})
+		provider := formatAuthType(auth)
+		if provider == "" || provider == "other" {
+			provider = classifyProvider(auth.Provider, auth.Type)
 		}
+		if provider == "" {
+			provider = "other"
+		}
+		targets = append(targets, usageTarget{
+			AuthID:    id,
+			AuthIndex: strings.TrimSpace(auth.AuthIndex),
+			Provider:  provider,
+			Email:     auth.Email,
+		})
 	}
 	return targets
 }
@@ -136,8 +132,10 @@ func fetchUsageTarget(target usageTarget) usageEntry {
 		return fetchClaudeUsage(target.AuthID, target.AuthIndex, target.Email)
 	case "devin":
 		return fetchDevinUsage(target.AuthID, target.AuthIndex, target.Email)
+	case "kimi":
+		return fetchKimiUsage(target.AuthID, target.AuthIndex, target.Email)
 	default:
-		return usageEntry{AuthID: target.AuthID, Provider: target.Provider, Email: target.Email, Err: "unsupported provider"}
+		return usageEntry{AuthID: target.AuthID, Provider: target.Provider, Email: target.Email, Err: "暂不支持拉取该类型的上游额度"}
 	}
 }
 
@@ -164,6 +162,16 @@ func classifyProvider(provider, typ string) string {
 	}
 	if p == "claude" || p == "anthropic" || t == "claude" || t == "anthropic" {
 		return "claude"
+	}
+	if p == "kimi" || strings.Contains(p, "kimi") || strings.Contains(p, "moonshot") ||
+		t == "kimi" || strings.Contains(t, "kimi") || strings.Contains(t, "moonshot") {
+		return "kimi"
+	}
+	if p != "" {
+		return p
+	}
+	if t != "" {
+		return t
 	}
 	return ""
 }
@@ -260,11 +268,58 @@ func earlierReset(current, candidate time.Time) bool {
 func filterProvider(entries []usageEntry, provider string) []usageEntry {
 	out := make([]usageEntry, 0, len(entries))
 	for _, e := range entries {
-		if e.Provider == provider {
+		if strings.EqualFold(e.Provider, provider) {
 			out = append(out, e)
 		}
 	}
 	return out
+}
+
+// groupProviderLabel 返回分组展示用的大写名称。
+func groupProviderLabel(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "codex":
+		return "GPT"
+	case "claude":
+		return "CLAUDE"
+	case "devin":
+		return "DEVIN"
+	case "kimi":
+		return "KIMI"
+	default:
+		return strings.ToUpper(strings.TrimSpace(provider))
+	}
+}
+
+// collectProviders 收集 entries 中出现的所有 provider 类型，并保持偏好顺序。
+func collectProviders(entries []usageEntry) []string {
+	seen := make(map[string]bool)
+	var list []string
+	for _, e := range entries {
+		p := strings.ToLower(strings.TrimSpace(e.Provider))
+		if p == "" {
+			p = "other"
+		}
+		if !seen[p] {
+			seen[p] = true
+			list = append(list, p)
+		}
+	}
+	preferredOrder := []string{"codex", "claude", "devin", "kimi"}
+	var ordered []string
+	for _, p := range preferredOrder {
+		if seen[p] {
+			ordered = append(ordered, p)
+			delete(seen, p)
+		}
+	}
+	for _, p := range list {
+		if seen[p] {
+			ordered = append(ordered, p)
+			delete(seen, p)
+		}
+	}
+	return ordered
 }
 
 // buildUsageMessage 生成企微 markdown 文本。
@@ -273,23 +328,27 @@ func buildUsageMessage(entries []usageEntry) string {
 	b.WriteString("# 额度汇总\n")
 	b.WriteString("> 更新时间：<font color=\"comment\">" + displayTime(time.Now(), "2006-01-02 15:04") + "</font>\n")
 
-	codex := filterProvider(entries, "codex")
-	if len(codex) > 0 {
-		b.WriteString("\n**GPT**\n")
-		writeGroup(&b, aggregateGroup(codex, false))
+	providers := collectProviders(entries)
+	var renderedCount int
+	for _, p := range providers {
+		group := filterProvider(entries, p)
+		if len(group) == 0 {
+			continue
+		}
+		agg := aggregateGroup(group, false)
+		if !agg.HasData {
+			continue
+		}
+		label := groupProviderLabel(p)
+		b.WriteString("\n**" + label + "**\n")
+		primaryLabel := "5小时限额"
+		if p == "devin" {
+			primaryLabel = "日限额"
+		}
+		writeGroupWithLabel(&b, agg, primaryLabel)
+		renderedCount++
 	}
-
-	claude := filterProvider(entries, "claude")
-	if len(claude) > 0 {
-		b.WriteString("\n**CLAUDE**\n")
-		writeGroup(&b, aggregateGroup(claude, false))
-	}
-	devin := filterProvider(entries, "devin")
-	if len(devin) > 0 {
-		b.WriteString("\n**DEVIN**\n")
-		writeGroupWithLabel(&b, aggregateGroup(devin, false), "日限额")
-	}
-	if len(codex) == 0 && len(claude) == 0 && len(devin) == 0 {
+	if renderedCount == 0 {
 		b.WriteString("\n> <font color=\"comment\">暂无额度数据，请先选择认证文件</font>\n")
 	}
 	return b.String()
@@ -523,14 +582,14 @@ func (a *app) usageSnapshot() usageSnapshotView {
 		GeneratedAt: displayTime(time.Now(), "2006-01-02 15:04"),
 		Message:     buildUsageMessage(entries),
 	}
-	if codex := filterProvider(entries, "codex"); len(codex) > 0 {
-		view.Groups = append(view.Groups, groupView("codex", "GPT", aggregateGroup(codex, false)))
-	}
-	if claude := filterProvider(entries, "claude"); len(claude) > 0 {
-		view.Groups = append(view.Groups, groupView("claude", "CLAUDE", aggregateGroup(claude, false)))
-	}
-	if devin := filterProvider(entries, "devin"); len(devin) > 0 {
-		view.Groups = append(view.Groups, groupView("devin", "DEVIN", aggregateGroup(devin, false)))
+	providers := collectProviders(entries)
+	for _, p := range providers {
+		group := filterProvider(entries, p)
+		if len(group) == 0 {
+			continue
+		}
+		label := groupProviderLabel(p)
+		view.Groups = append(view.Groups, groupView(p, label, aggregateGroup(group, false)))
 	}
 	for _, e := range entries {
 		if e.Err != "" {
