@@ -603,7 +603,7 @@ func (a *app) renderStatusPage() []byte {
             <div class="cwp-settings-grid">
               <label class="cwp-model-field"><span>模型</span>
                 <textarea id="model" spellcheck="false" placeholder="gpt-6-luna, claude-sonnet-4-6"></textarea>
-                <span class="cwp-muted">可填多个模型，支持逗号、中文逗号、顿号、分号或换行分隔。</span>
+                <span class="cwp-muted">可填多个模型，支持逗号、中文逗号、顿号、分号或换行分隔。若凭证属于不同渠道（如 Kimi、Claude、GPT、Gemini 等），插件将自动识别对应渠道的可用模型进行预热。</span>
               </label>
               <label><span>最小间隔</span>
                 <input id="minInterval" spellcheck="false" placeholder="5h">

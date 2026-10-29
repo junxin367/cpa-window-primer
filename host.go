@@ -172,7 +172,7 @@ func providerForAuthID(authID string) string {
 	}
 	for _, entry := range entries {
 		if authIDForEntry(entry) == authID || strings.TrimSpace(entry.AuthIndex) == authID {
-			return classifyProvider(entry.Provider, entry.Type)
+			return formatAuthType(entry)
 		}
 	}
 	return ""
@@ -232,7 +232,7 @@ func warmupAuthTargetFromEntry(auth pluginapi.HostAuthFileEntry, requested strin
 	return warmupAuthTarget{
 		AuthID:    authID,
 		AuthIndex: authIndex,
-		Provider:  classifyProvider(auth.Provider, auth.Type),
+		Provider:  formatAuthType(auth),
 		Success:   auth.Success,
 	}, nil
 }
@@ -714,34 +714,56 @@ func warmupModelCandidates(cfg runtimeConfig, authID string) []string {
 	provider := providerForAuthID(authID)
 	configured := parseModelList(cfg.Model)
 	var out []string
+
+	// 1. 用户配置中若显式指定了匹配当前凭证类型的模型，优先使用
 	for _, model := range configured {
 		if modelMatchesProvider(model, provider) {
 			out = append(out, model)
 		}
 	}
-	for _, model := range configured {
-		if modelProvider(model) == "" {
-			out = append(out, model)
+
+	// 2. 自动识别并补充对应提供商的模型（如 kimi 自动识别 kimi-k2.5 / kimi-k3 等）
+	out = append(out, fallbackModelsForProvider(provider)...)
+
+	// 3. 通用/未知提供商或 Devin，补充配置中的未归类模型
+	if provider == "" || provider == "devin" {
+		for _, model := range configured {
+			if modelProvider(model) == "" {
+				out = append(out, model)
+			}
+		}
+		if len(out) == 0 {
+			out = append(out, configured...)
 		}
 	}
-	if fallback := fallbackModelForProvider(provider); fallback != "" {
-		out = append(out, fallback)
-	}
-	if provider == "" {
-		out = append(out, configured...)
-	}
+
 	return uniqueTrimmed(out)
 }
 
 func modelMatchesProvider(model, provider string) bool {
-	// Devin 可代理不同模型家族；实际可用性仍由指定凭证的宿主调度确认。
+	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "devin" {
 		return strings.TrimSpace(model) != "" && !strings.Contains(strings.ToLower(model), "image")
 	}
 	if provider == "" {
 		return true
 	}
-	return modelProvider(model) == provider
+	detected := modelProvider(model)
+	if detected == provider {
+		return true
+	}
+	switch provider {
+	case "antigravity", "gemini":
+		return detected == "antigravity" || detected == "gemini"
+	case "claude", "anthropic":
+		return detected == "claude" || detected == "anthropic"
+	case "codex", "openai":
+		return detected == "codex" || detected == "openai"
+	case "grok", "xai":
+		return detected == "grok" || detected == "xai"
+	default:
+		return detected == provider
+	}
 }
 
 func modelProvider(model string) string {
@@ -758,24 +780,64 @@ func modelProvider(model string) string {
 		strings.Contains(normalized, "codex") ||
 		strings.Contains(normalized, "openai"):
 		return "codex"
+	case strings.Contains(normalized, "kimi") || strings.Contains(normalized, "moonshot"):
+		return "kimi"
+	case strings.Contains(normalized, "gemini") || strings.Contains(normalized, "antigravity"):
+		return "antigravity"
+	case strings.Contains(normalized, "deepseek"):
+		return "deepseek"
+	case strings.Contains(normalized, "grok") || strings.Contains(normalized, "xai"):
+		return "grok"
+	case strings.Contains(normalized, "qwen"):
+		return "qwen"
+	case strings.Contains(normalized, "minimax"):
+		return "minimax"
+	case strings.Contains(normalized, "glm") || strings.Contains(normalized, "zhipu"):
+		return "glm"
 	default:
 		return ""
 	}
 }
 
-func fallbackModelForProvider(provider string) string {
-	models, err := availableModels()
-	if err == nil {
-		if model := chooseFallbackModel(provider, models); model != "" {
-			return model
+func fallbackModelsForProvider(provider string) []string {
+	var candidates []string
+	if models, err := availableModels(); err == nil && len(models) > 0 {
+		for _, m := range models {
+			if modelMatchesAvailableProvider(m, provider) {
+				candidates = append(candidates, m.ID)
+			}
 		}
 	}
-	for _, model := range parseModelList(defaultModel) {
-		if modelMatchesProvider(model, provider) {
-			return model
-		}
+	defaults := defaultModelsForProvider(provider)
+	candidates = append(candidates, defaults...)
+	if len(candidates) == 0 && provider == "" {
+		candidates = append(candidates, defaultFirstModel())
 	}
-	return defaultFirstModel()
+	return uniqueTrimmed(candidates)
+}
+
+func defaultModelsForProvider(provider string) []string {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	switch p {
+	case "kimi":
+		return []string{"kimi-k2.5", "kimi-k3.1-pro", "kimi-k3", "kimi-k2"}
+	case "codex":
+		return []string{"gpt-6-luna", "gpt-5.4", "gpt-5.3-codex", "gpt-4o", "o3-mini"}
+	case "claude":
+		return []string{"claude-sonnet-4-6", "claude-sonnet-4-5", "claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"}
+	case "antigravity", "gemini":
+		return []string{"gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-pro"}
+	case "deepseek":
+		return []string{"deepseek-chat", "deepseek-reasoner", "deepseek-v3"}
+	case "grok", "xai":
+		return []string{"grok-3", "grok-2", "grok-beta"}
+	case "qwen":
+		return []string{"qwen-plus", "qwen-turbo", "qwen-max"}
+	case "devin":
+		return []string{"gpt-5.4", "claude-sonnet-4-6", "gpt-4o"}
+	default:
+		return nil
+	}
 }
 
 func defaultFirstModel() string {
@@ -787,22 +849,9 @@ func defaultFirstModel() string {
 }
 
 func chooseFallbackModel(provider string, models []availableModel) string {
-	if len(models) == 0 {
-		return ""
-	}
-	// 项目默认值优先；仅接受模型列表中的精确匹配，避免把图像模型当成文本预热模型。
-	preferred := append(parseModelList(defaultModel), "gpt-5.4", "gpt-5.3-codex", "claude-sonnet-4-5")
-	for _, want := range preferred {
-		for _, model := range models {
-			if modelMatchesAvailableProvider(model, provider) && strings.EqualFold(model.ID, want) {
-				return model.ID
-			}
-		}
-	}
-	for _, model := range models {
-		if modelMatchesAvailableProvider(model, provider) {
-			return model.ID
-		}
+	fallbacks := fallbackModelsForProvider(provider)
+	if len(fallbacks) > 0 {
+		return fallbacks[0]
 	}
 	return ""
 }
@@ -811,6 +860,7 @@ func modelMatchesAvailableProvider(model availableModel, provider string) bool {
 	if strings.Contains(strings.ToLower(model.ID), "image") {
 		return false
 	}
+	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "devin" {
 		return strings.EqualFold(model.Owner, "devin") || strings.EqualFold(model.RawType, "devin")
 	}
@@ -818,9 +868,11 @@ func modelMatchesAvailableProvider(model availableModel, provider string) bool {
 		return strings.TrimSpace(model.ID) != ""
 	}
 	if detected := modelProvider(model.ID); detected != "" {
-		return detected == provider
+		return modelMatchesProvider(model.ID, provider)
 	}
-	return modelProvider(model.Owner) == provider || modelProvider(model.RawType) == provider
+	ownerMatch := modelMatchesProvider(model.Owner, provider)
+	rawTypeMatch := modelMatchesProvider(model.RawType, provider)
+	return ownerMatch || rawTypeMatch
 }
 
 func availableModels() ([]availableModel, error) {

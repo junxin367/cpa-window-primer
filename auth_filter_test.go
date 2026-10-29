@@ -140,3 +140,40 @@ func TestFormatAuthType(t *testing.T) {
 		})
 	}
 }
+func TestWarmupModelAutoRecognition(t *testing.T) {
+	cfg := runtimeConfig{
+		pluginConfig: pluginConfig{
+			Model: "gpt-6-luna, claude-sonnet-4-6",
+		},
+	}
+
+	// 测试 kimi 提供商：即使配置只有 gpt 和 claude，也能自动识别出 kimi 模型
+	kimiCandidates := fallbackModelsForProvider("kimi")
+	if len(kimiCandidates) == 0 || kimiCandidates[0] != "kimi-k2.5" {
+		t.Fatalf("fallbackModelsForProvider(kimi) = %v, want kimi-k2.5 as first", kimiCandidates)
+	}
+	for _, m := range kimiCandidates {
+		if !strings.Contains(m, "kimi") {
+			t.Fatalf("kimi candidates contain non-kimi model: %s", m)
+		}
+	}
+
+	// 测试 antigravity 提供商：自动识别 gemini 模型
+	agCandidates := fallbackModelsForProvider("antigravity")
+	if len(agCandidates) == 0 || !strings.Contains(agCandidates[0], "gemini") {
+		t.Fatalf("fallbackModelsForProvider(antigravity) = %v, want gemini model", agCandidates)
+	}
+
+	// 测试 modelMatchesProvider
+	if !modelMatchesProvider("kimi-k3.1-pro", "kimi") {
+		t.Fatal("modelMatchesProvider(kimi-k3.1-pro, kimi) should be true")
+	}
+	if modelMatchesProvider("gpt-6-luna", "kimi") {
+		t.Fatal("modelMatchesProvider(gpt-6-luna, kimi) should be false")
+	}
+	if !modelMatchesProvider("gemini-2.5-flash", "antigravity") {
+		t.Fatal("modelMatchesProvider(gemini-2.5-flash, antigravity) should be true")
+	}
+
+	_ = cfg
+}
