@@ -849,11 +849,25 @@ func defaultFirstModel() string {
 }
 
 func chooseFallbackModel(provider string, models []availableModel) string {
-	fallbacks := fallbackModelsForProvider(provider)
+	preferred := append(parseModelList(defaultModel), defaultModelsForProvider(provider)...)
+	preferred = append(preferred, "gpt-5.4", "gpt-5.3-codex", "claude-sonnet-4-5")
+	for _, want := range preferred {
+		for _, model := range models {
+			if modelMatchesAvailableProvider(model, provider) && strings.EqualFold(model.ID, want) {
+				return model.ID
+			}
+		}
+	}
+	for _, model := range models {
+		if modelMatchesAvailableProvider(model, provider) {
+			return model.ID
+		}
+	}
+	fallbacks := defaultModelsForProvider(provider)
 	if len(fallbacks) > 0 {
 		return fallbacks[0]
 	}
-	return ""
+	return defaultFirstModel()
 }
 
 func modelMatchesAvailableProvider(model availableModel, provider string) bool {
