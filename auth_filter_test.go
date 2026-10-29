@@ -31,7 +31,17 @@ func TestIsSupportedOAuthAuth(t *testing.T) {
 		{
 			name: "openai api key name",
 			auth: pluginapi.HostAuthFileEntry{Provider: "openai", Name: "openai-api-key.json"},
-			want: false,
+			want: true,
+		},
+		{
+			name: "kimi provider",
+			auth: pluginapi.HostAuthFileEntry{Provider: "kimi", ID: "kimi-1", Name: "kimi.json"},
+			want: true,
+		},
+		{
+			name: "devin provider",
+			auth: pluginapi.HostAuthFileEntry{Provider: "devin", ID: "devin-1", Name: "devin.json"},
+			want: true,
 		},
 		{
 			name: "claude provider",
@@ -100,5 +110,33 @@ func TestAuthEntrySelectedMatchesIDIndexAndName(t *testing.T) {
 	}
 	if authEntrySelected(map[string]bool{"missing": true}, auth) {
 		t.Fatal("authEntrySelected accepted unrelated key")
+	}
+}
+
+func TestFormatAuthType(t *testing.T) {
+	tests := []struct {
+		name string
+		auth pluginapi.HostAuthFileEntry
+		want string
+	}{
+		{name: "codex provider", auth: pluginapi.HostAuthFileEntry{Provider: "codex"}, want: "codex"},
+		{name: "devin provider", auth: pluginapi.HostAuthFileEntry{Provider: "devin"}, want: "devin"},
+		{name: "kimi provider", auth: pluginapi.HostAuthFileEntry{Provider: "kimi"}, want: "kimi"},
+		{name: "kimi-ai type", auth: pluginapi.HostAuthFileEntry{Type: "kimi-ai"}, want: "kimi"},
+		{name: "claude provider", auth: pluginapi.HostAuthFileEntry{Provider: "claude"}, want: "claude"},
+		{name: "anthropic provider", auth: pluginapi.HostAuthFileEntry{Provider: "anthropic"}, want: "claude"},
+		{name: "openai oauth", auth: pluginapi.HostAuthFileEntry{Provider: "openai", Name: "openai-oauth.json"}, want: "codex"},
+		{name: "openai api key", auth: pluginapi.HostAuthFileEntry{Provider: "openai", Name: "openai-api-key.json"}, want: "openai"},
+		{name: "gemini provider", auth: pluginapi.HostAuthFileEntry{Provider: "gemini"}, want: "gemini"},
+		{name: "deepseek provider", auth: pluginapi.HostAuthFileEntry{Provider: "deepseek"}, want: "deepseek"},
+		{name: "fallback by type", auth: pluginapi.HostAuthFileEntry{Type: "custom-llm"}, want: "custom-llm"},
+		{name: "fallback by name prefix", auth: pluginapi.HostAuthFileEntry{Name: "custom_auth.json"}, want: "custom"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatAuthType(tt.auth); got != tt.want {
+				t.Fatalf("formatAuthType() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

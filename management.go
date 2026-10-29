@@ -56,6 +56,7 @@ type managementAuthView struct {
 	ID                string     `json:"id"`
 	AuthIndex         string     `json:"auth_index,omitempty"`
 	Name              string     `json:"name"`
+	Type              string     `json:"type"`
 	Provider          string     `json:"provider,omitempty"`
 	Status            string     `json:"status,omitempty"`
 	StatusMessage     string     `json:"status_message,omitempty"`
@@ -262,6 +263,7 @@ func (a *app) managementSnapshot() managementSnapshot {
 			ID:            id,
 			AuthIndex:     auth.AuthIndex,
 			Name:          auth.Name,
+			Type:          formatAuthType(auth),
 			Provider:      auth.Provider,
 			Status:        auth.Status,
 			StatusMessage: auth.StatusMessage,
@@ -465,6 +467,19 @@ func (a *app) renderStatusPage() []byte {
     }
     .cwp-badge.cwp-ok { background: color-mix(in srgb, #16a34a 14%, Canvas 86%); color: color-mix(in srgb, #15803d 78%, CanvasText 22%); }
     .cwp-badge.cwp-warn { background: color-mix(in srgb, #d97706 14%, Canvas 86%); color: color-mix(in srgb, #b45309 78%, CanvasText 22%); }
+    .cwp-type-badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      background: color-mix(in srgb, CanvasText 8%, Canvas 92%);
+      color: CanvasText;
+      border: 1px solid color-mix(in srgb, CanvasText 15%, Canvas 85%);
+      text-transform: lowercase;
+      white-space: nowrap;
+    }
     .cwp-status-cell { max-width: 220px; min-width: 100px; }
     .cwp-status-cell .cwp-muted { overflow-wrap: anywhere; word-break: break-word; }
     .cwp-toast-host {
@@ -556,6 +571,7 @@ func (a *app) renderStatusPage() []byte {
               <thead>
                 <tr>
                   <th>选择</th>
+                  <th>类型</th>
                   <th>认证文件</th>
                   <th>账号</th>
                   <th>状态</th>
@@ -721,7 +737,7 @@ func (a *app) renderStatusPage() []byte {
       field('authSectionTitle').textContent = usage ? '额度推送凭证' : '预热凭证';
       field('authSelectionHelp').textContent = usage
         ? '选择参与额度预览和推送的 CPA 凭证，不影响预热选择。支持 Codex / Claude / Devin。'
-        : '选择参与定时预热的 CPA 凭证，与额度推送独立保存。支持 Codex / Claude / Devin。';
+        : '选择参与定时预热的 CPA 凭证，与额度推送独立保存。支持各类凭证（如 Codex / Devin / Kimi 等）。';
       field('saveConfig').textContent = usage ? '保存额度推送设置' : '保存预热设置';
       for (const section of ['warmup', 'usage']) {
         const button = field(section + 'Tab');
@@ -1120,8 +1136,8 @@ func (a *app) renderStatusPage() []byte {
       const authState = (state.snapshot.state && state.snapshot.state.auths) || {};
       if (!state.snapshot.auths.length) {
         const tr = document.createElement('tr');
-        const td = createCell('没有找到可管理的 Codex / OpenAI / Claude / Anthropic / Devin 凭证，请先在 CPA 中添加。');
-        td.colSpan = state.activeSettings === 'usage' ? 4 : 7;
+        const td = createCell('没有找到可管理的凭证，请先在 CPA 中添加。');
+        td.colSpan = state.activeSettings === 'usage' ? 5 : 8;
         tr.appendChild(td);
         body.appendChild(tr);
         return;
@@ -1144,6 +1160,13 @@ func (a *app) renderStatusPage() []byte {
         selectTd.appendChild(check);
         tr.appendChild(selectTd);
 
+        const typeTd = document.createElement('td');
+        const typeBadge = document.createElement('span');
+        typeBadge.className = 'cwp-type-badge';
+        typeBadge.textContent = auth.type || auth.provider || 'unknown';
+        typeTd.appendChild(typeBadge);
+        tr.appendChild(typeTd);
+
         const nameTd = document.createElement('td');
         const code = document.createElement('code');
         code.textContent = auth.name || auth.id;
@@ -1152,12 +1175,6 @@ func (a *app) renderStatusPage() []byte {
         idLine.className = 'cwp-muted';
         idLine.textContent = auth.id;
         nameTd.appendChild(idLine);
-        if (auth.provider) {
-          const providerLine = document.createElement('div');
-          providerLine.className = 'cwp-muted';
-          providerLine.textContent = auth.provider;
-          nameTd.appendChild(providerLine);
-        }
         tr.appendChild(nameTd);
 
         tr.appendChild(createCell(auth.email || auth.label || '无'));

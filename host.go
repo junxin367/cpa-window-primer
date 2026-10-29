@@ -560,25 +560,63 @@ func isSchedulableOAuthAuth(entry pluginapi.HostAuthFileEntry) bool {
 }
 
 func isManagedOAuthAuth(entry pluginapi.HostAuthFileEntry) bool {
-	provider := strings.ToLower(strings.TrimSpace(entry.Provider))
+	return authIDForEntry(entry) != "" || strings.TrimSpace(entry.Name) != ""
+}
+
+// formatAuthType 返回展示用的凭证类型，如 codex、devin、kimi、claude 等。
+func formatAuthType(entry pluginapi.HostAuthFileEntry) string {
 	typ := strings.ToLower(strings.TrimSpace(entry.Type))
+	provider := strings.ToLower(strings.TrimSpace(entry.Provider))
 	name := strings.ToLower(strings.TrimSpace(entry.Name))
-	if provider == "devin" || typ == "devin" {
-		return true
+
+	detect := func(substr string) bool {
+		return strings.Contains(typ, substr) || strings.Contains(provider, substr) || strings.Contains(name, substr)
 	}
-	if provider == "codex" || typ == "codex" {
-		return true
-	}
-	if provider == "claude" || provider == "anthropic" || typ == "claude" || typ == "anthropic" {
-		return true
-	}
-	if provider == "openai" || typ == "openai" {
-		if strings.Contains(name, "api") && strings.Contains(name, "key") {
-			return false
+
+	switch {
+	case detect("devin"):
+		return "devin"
+	case detect("kimi") || detect("moonshot"):
+		return "kimi"
+	case detect("codex"):
+		return "codex"
+	case detect("claude") || detect("anthropic"):
+		return "claude"
+	case detect("openai"):
+		if strings.Contains(name, "oauth") || strings.Contains(typ, "oauth") || strings.Contains(provider, "oauth") {
+			return "codex"
 		}
-		return strings.Contains(name, "oauth") || strings.Contains(typ, "oauth") || strings.Contains(provider, "oauth")
+		return "openai"
+	case detect("gemini"):
+		return "gemini"
+	case detect("antigravity"):
+		return "antigravity"
+	case detect("deepseek"):
+		return "deepseek"
+	case detect("grok") || detect("xai"):
+		return "grok"
+	case detect("qwen"):
+		return "qwen"
+	case detect("minimax"):
+		return "minimax"
+	case detect("glm") || detect("zhipu"):
+		return "glm"
 	}
-	return false
+
+	if typ != "" {
+		return typ
+	}
+	if provider != "" {
+		return provider
+	}
+	cleanName := strings.TrimSuffix(name, ".json")
+	if idx := strings.IndexAny(cleanName, "-_"); idx > 0 {
+		return cleanName[:idx]
+	}
+	if cleanName != "" {
+		return cleanName
+	}
+	return "unknown"
 }
 
 func isHostAuthQuotaBlocked(entry pluginapi.HostAuthFileEntry, now time.Time) bool {
