@@ -480,6 +480,20 @@ func (a *app) renderStatusPage() []byte {
       text-transform: lowercase;
       white-space: nowrap;
     }
+    .cwp-spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      vertical-align: -1px;
+      margin-right: 6px;
+      animation: cwp-spin .7s linear infinite;
+    }
+    @keyframes cwp-spin {
+      to { transform: rotate(360deg); }
+    }
     .cwp-status-cell { max-width: 220px; min-width: 100px; }
     .cwp-status-cell .cwp-muted { overflow-wrap: anywhere; word-break: break-word; }
     .cwp-toast-host {
@@ -1225,7 +1239,7 @@ func (a *app) renderStatusPage() []byte {
         run.className = 'cwp-secondary';
         run.textContent = '立即预热';
         run.disabled = !selectable;
-        run.addEventListener('click', () => runWarmup(auth.id, true));
+        run.addEventListener('click', () => runWarmup(auth.id, true, run, auth.name || auth.id));
         actionTd.appendChild(run);
         tr.appendChild(actionTd);
         body.appendChild(tr);
@@ -1478,14 +1492,20 @@ func (a *app) renderStatusPage() []byte {
       return data;
     }
 
-    async function runWarmup(authID, force) {
+    async function runWarmup(authID, force, buttonEl, authDisplayName) {
       clearStatus();
+      const label = authDisplayName || authID;
+      if (buttonEl) {
+        buttonEl.disabled = true;
+        buttonEl.innerHTML = '<span class="cwp-spinner" aria-hidden="true"></span>预热中...';
+      }
       try {
         const data = await runWarmupRequest(authID, force);
         if (data && data.success === false) {
           setStatus(warmupFeedback(data), true);
         } else {
-          setStatus('手动预热完成，不影响后台定时计划。');
+          const modelUsed = data && data.model ? '（' + data.model + '）' : '';
+          setStatus('「' + label + '」' + modelUsed + '手动预热成功！');
         }
         await refreshSnapshot(false, true);
       } catch (error) {
@@ -1494,6 +1514,11 @@ func (a *app) renderStatusPage() []byte {
         const message = warmupFeedback(data, error.message || String(error));
         setStatus(message, true);
         await refreshSnapshot(false, true);
+      } finally {
+        if (buttonEl) {
+          buttonEl.disabled = false;
+          buttonEl.textContent = '立即预热';
+        }
       }
     }
 
