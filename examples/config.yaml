@@ -16,7 +16,8 @@ plugins:
         - "07:00"
         - "12:00"
         - "17:00"
-      model: "gpt-5.4"
+      # 也可在管理页的凭证列表中选择各账号的可用模型。
+      auth_models: {}
       prompt: "hi"
       min_interval: "5h"
       lead_time: "1m"

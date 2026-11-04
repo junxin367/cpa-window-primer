@@ -30,7 +30,7 @@ func warmupMessage(record attemptRecord) string {
 	case has("selected model is at capacity", "model is at capacity"):
 		return "预热失败：" + model + "暂时繁忙，请稍后重试或更换模型。"
 	case has("model_not_found", "model not found", "unknown provider for model", "unknown model", "unsupported model", "invalid model", "not a valid model", "no such model"):
-		return "预热失败：" + model + "不可用。请在“预热设置 → 模型”中改为 CPA 当前提供且该账号支持的模型，然后重试。"
+		return "预热失败：" + model + "不可用。请在凭证列表的“预热模型”下拉框中重新选择该账号支持的模型，然后重试。"
 	case has("quota_blocked", "usage_limit_reached", "insufficient_quota", "quota exhausted", "quota exceeded", "额度已满", "限额已满") || record.StatusCode == 402:
 		return "预热失败：该账号额度不足，额度恢复后可重试。后台会定期复查额度。"
 	case has("rate_limit", "rate limit", "too many requests") || record.StatusCode == 429:

@@ -165,7 +165,7 @@ func (a *app) recheckQuotaBlocks(now time.Time) {
 	entries := fetchUsageTargets(collectUsageTargets(blockedIDs, auths))
 	for _, entry := range entries {
 		// 这里只需判断额度窗口，不必访问受 API Key 保护的模型列表。
-		a.reconcileQuotaBlockFromUsage(entry.AuthID, "", cfg, parseModelList(cfg.Model), entry, time.Now(), false)
+		a.reconcileQuotaBlockFromUsage(entry.AuthID, "", cfg, configuredModelsForAuth(cfg, entry.AuthID), entry, time.Now(), false)
 	}
 }
 

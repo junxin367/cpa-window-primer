@@ -182,10 +182,13 @@ type aggregateResult struct {
 	HasData          bool
 	HasPrimary       bool
 	HasSecondary     bool
+	HasDaily         bool
 	PrimaryPercent   float64
 	PrimaryReset     time.Time
 	SecondaryPercent float64
 	SecondaryReset   time.Time
+	DailyPercent     float64
+	DailyReset       time.Time
 }
 
 func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
@@ -194,8 +197,11 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 		primaryTotalWeight     float64
 		secondaryUsedWeighted  float64
 		secondaryTotalWeight   float64
+		dailyUsedWeighted      float64
+		dailyTotalWeight       float64
 		earliestPrimaryReset   time.Time
 		earliestSecondaryReset time.Time
+		earliestDailyReset     time.Time
 		any                    bool
 	)
 	for _, e := range entries {
@@ -243,6 +249,14 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 			}
 			any = true
 		}
+		if !sonnet && e.Provider != "devin" && e.Daily.HasData {
+			dailyUsedWeighted += e.Daily.UsedPercent * e.Weight
+			dailyTotalWeight += e.Weight
+			if earlierReset(earliestDailyReset, e.Daily.ResetAt) {
+				earliestDailyReset = e.Daily.ResetAt
+			}
+			any = true
+		}
 	}
 	res := aggregateResult{HasData: any}
 	if primaryTotalWeight > 0 {
@@ -254,6 +268,11 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 		res.HasSecondary = true
 		res.SecondaryPercent = secondaryUsedWeighted / secondaryTotalWeight
 		res.SecondaryReset = earliestSecondaryReset
+	}
+	if dailyTotalWeight > 0 {
+		res.HasDaily = true
+		res.DailyPercent = dailyUsedWeighted / dailyTotalWeight
+		res.DailyReset = earliestDailyReset
 	}
 	return res
 }
@@ -268,11 +287,18 @@ func earlierReset(current, candidate time.Time) bool {
 func filterProvider(entries []usageEntry, provider string) []usageEntry {
 	out := make([]usageEntry, 0, len(entries))
 	for _, e := range entries {
-		if strings.EqualFold(e.Provider, provider) {
+		if usageProvider(e.Provider) == usageProvider(provider) {
 			out = append(out, e)
 		}
 	}
 	return out
+}
+
+func usageProvider(provider string) string {
+	if provider = strings.ToLower(strings.TrimSpace(provider)); provider != "" {
+		return provider
+	}
+	return "other"
 }
 
 // groupProviderLabel 返回分组展示用的大写名称。
@@ -286,6 +312,8 @@ func groupProviderLabel(provider string) string {
 		return "DEVIN"
 	case "kimi":
 		return "KIMI"
+	case "other":
+		return "其他类型"
 	default:
 		return strings.ToUpper(strings.TrimSpace(provider))
 	}
@@ -296,10 +324,7 @@ func collectProviders(entries []usageEntry) []string {
 	seen := make(map[string]bool)
 	var list []string
 	for _, e := range entries {
-		p := strings.ToLower(strings.TrimSpace(e.Provider))
-		if p == "" {
-			p = "other"
-		}
+		p := usageProvider(e.Provider)
 		if !seen[p] {
 			seen[p] = true
 			list = append(list, p)
@@ -328,30 +353,45 @@ func buildUsageMessage(entries []usageEntry) string {
 	b.WriteString("# 额度汇总\n")
 	b.WriteString("> 更新时间：<font color=\"comment\">" + displayTime(time.Now(), "2006-01-02 15:04") + "</font>\n")
 
-	providers := collectProviders(entries)
-	var renderedCount int
-	for _, p := range providers {
-		group := filterProvider(entries, p)
-		if len(group) == 0 {
-			continue
+	groups := usageGroups(entries)
+	for _, group := range groups {
+		b.WriteString("\n**" + group.Label + "**\n")
+		for _, line := range group.Lines {
+			writeUsageMetricLine(&b, line.Label, line.Percent, line.Reset)
 		}
-		agg := aggregateGroup(group, false)
-		if !agg.HasData {
-			continue
+		if group.Status != "" {
+			b.WriteString("> <font color=\"comment\">" + group.Status + "</font>\n")
 		}
-		label := groupProviderLabel(p)
-		b.WriteString("\n**" + label + "**\n")
-		primaryLabel := "5小时限额"
-		if p == "devin" {
-			primaryLabel = "日限额"
-		}
-		writeGroupWithLabel(&b, agg, primaryLabel)
-		renderedCount++
 	}
-	if renderedCount == 0 {
+	if len(groups) == 0 {
 		b.WriteString("\n> <font color=\"comment\">暂无额度数据，请先选择认证文件</font>\n")
 	}
 	return b.String()
+}
+
+func usageGroups(entries []usageEntry) []usageGroupView {
+	groups := make([]usageGroupView, 0)
+	for _, provider := range collectProviders(entries) {
+		entries := filterProvider(entries, provider)
+		group := groupView(provider, groupProviderLabel(provider), aggregateGroup(entries, false))
+		for _, entry := range entries {
+			if entry.Err != "" {
+				group.FailedCount++
+			}
+		}
+		group.AuthCount = len(entries)
+		if !group.HasData {
+			group.Status = "暂无可汇总的额度数据"
+		}
+		if group.FailedCount > 0 {
+			if group.Status != "" {
+				group.Status += "；"
+			}
+			group.Status += fmt.Sprintf("%d/%d 个凭证查询失败或暂不支持额度查询", group.FailedCount, group.AuthCount)
+		}
+		groups = append(groups, group)
+	}
+	return groups
 }
 
 func writeGroup(b *strings.Builder, agg aggregateResult) {
@@ -373,14 +413,18 @@ func writeGroupWithLabel(b *strings.Builder, agg aggregateResult, primaryLabel s
 
 // writeUsageLine 输出一行：名称 + 进度条 + 着色百分比 + 刷新时间。
 func writeUsageLine(b *strings.Builder, label string, percent float64, reset time.Time) {
+	writeUsageMetricLine(b, label, percent, resetText(reset))
+}
+
+func writeUsageMetricLine(b *strings.Builder, label string, percent float64, reset string) {
 	// 入参 percent 为“已用”百分比，展示改为“剩余”。
 	remain := 100 - percent
 	color := remainColor(remain)
 	// “对齐后的标签 + 进度条”放进反引号等宽区保证列对齐；
 	// 进度条固定 10 格，所以百分比起点也对齐，放在外部以保留颜色。
 	line := fmt.Sprintf("> `%s %s` <font color=\"%s\">%s</font>", padLabel(label, 12), usageBar(remain), color, percentText(remain))
-	if r := resetText(reset); r != "" {
-		line += " <font color=\"comment\">" + r + " 重置</font>"
+	if reset != "" {
+		line += " <font color=\"comment\">" + reset + " 重置</font>"
 	}
 	b.WriteString(line + "\n")
 }
@@ -567,6 +611,9 @@ type usageGroupView struct {
 	HasPrimary       bool              `json:"has_primary"`
 	HasSecondary     bool              `json:"has_secondary"`
 	Lines            []usageMetricView `json:"lines,omitempty"`
+	AuthCount        int               `json:"auth_count"`
+	FailedCount      int               `json:"failed_count"`
+	Status           string            `json:"status,omitempty"`
 }
 
 type usageMetricView struct {
@@ -581,15 +628,7 @@ func (a *app) usageSnapshot() usageSnapshotView {
 	view := usageSnapshotView{
 		GeneratedAt: displayTime(time.Now(), "2006-01-02 15:04"),
 		Message:     buildUsageMessage(entries),
-	}
-	providers := collectProviders(entries)
-	for _, p := range providers {
-		group := filterProvider(entries, p)
-		if len(group) == 0 {
-			continue
-		}
-		label := groupProviderLabel(p)
-		view.Groups = append(view.Groups, groupView(p, label, aggregateGroup(group, false)))
+		Groups:      usageGroups(entries),
 	}
 	for _, e := range entries {
 		if e.Err != "" {
@@ -610,7 +649,7 @@ func (a *app) reconcileQuotaBlocksFromUsageEntries(entries []usageEntry) {
 		if entry.AuthID == "" {
 			continue
 		}
-		models := parseModelList(cfg.Model)
+		models := configuredModelsForAuth(cfg, entry.AuthID)
 		a.reconcileQuotaBlockFromUsage(entry.AuthID, "", cfg, models, entry, now, false)
 	}
 }
@@ -641,6 +680,9 @@ func groupViewWithExtra(provider, label string, agg aggregateResult, extra []usa
 		}
 		if agg.HasSecondary {
 			view.Lines = append(view.Lines, usageMetricView{Label: "周限额", Percent: agg.SecondaryPercent, Reset: resetText(agg.SecondaryReset)})
+		}
+		if agg.HasDaily {
+			view.Lines = append(view.Lines, usageMetricView{Label: "日限额", Percent: agg.DailyPercent, Reset: resetText(agg.DailyReset)})
 		}
 		view.Lines = append(view.Lines, extra...)
 	}

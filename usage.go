@@ -11,7 +11,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
-// usageWindow 表示一个限额窗口（5 小时或一周）。
+// usageWindow 表示一个限额窗口（5 小时、日或周）。
 type usageWindow struct {
 	UsedPercent float64
 	ResetAt     time.Time
@@ -21,13 +21,13 @@ type usageWindow struct {
 // usageEntry 表示单个认证文件的额度结果。
 type usageEntry struct {
 	AuthID    string
-	Provider  string // codex / claude / devin
+	Provider  string // 与凭证列表一致的提供商类型。
 	Email     string
 	Plan      string      // 原始套餐字符串
 	Weight    float64     // 套餐倍数（相对基准单位）
 	Primary   usageWindow // 归一化后的 5 小时窗口，不等同于上游 primary_window。
 	Secondary usageWindow // 归一化后的周窗口，不等同于上游 secondary_window。
-	Daily     usageWindow // Devin 日额度，独立于 5 小时窗口。
+	Daily     usageWindow // Devin、Kimi 等提供商的日额度，独立于 5 小时窗口。
 	// Sonnet 为 Claude 单独统计的窗口（如有）。
 	SonnetPrimary   usageWindow
 	SonnetSecondary usageWindow

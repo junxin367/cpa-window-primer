@@ -711,6 +711,10 @@ func parseModelList(raw string) []string {
 }
 
 func warmupModelCandidates(cfg runtimeConfig, authID string) []string {
+	// 按凭证明确选择模型后，定时和手动预热均只使用该模型。
+	if model := strings.TrimSpace(cfg.AuthModels[authID]); model != "" {
+		return []string{model}
+	}
 	provider := providerForAuthID(authID)
 	configured := parseModelList(cfg.Model)
 	var out []string

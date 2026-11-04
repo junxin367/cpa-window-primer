@@ -137,6 +137,7 @@ func (a *app) handleManualRun(req managementRequest) ([]byte, error) {
 	var body struct {
 		AuthID string `json:"auth_id"`
 		Force  bool   `json:"force"`
+		Model  string `json:"model,omitempty"`
 	}
 	if len(req.Body) > 0 {
 		if err := json.Unmarshal(req.Body, &body); err != nil {
@@ -167,6 +168,11 @@ func (a *app) handleManualRun(req managementRequest) ([]byte, error) {
 		if _, ok := allowed[authID]; !ok {
 			return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{"error": "auth_id is not available for warmup", "msg": "预热失败：所选认证文件不存在或已禁用，请重新选择可用的认证文件。"}))
 		}
+	}
+	if model := strings.TrimSpace(body.Model); model != "" {
+		// 手动操作可试用列表中尚未保存的选择，不改动后台定时配置。
+		cfg.AuthModels = normalizeAuthModels(cfg.AuthModels)
+		cfg.AuthModels[authID] = model
 	}
 	record := a.executeWarmup(authID, "manual-"+time.Now().Format("20060102T150405"), cfg, req.HostCallbackID, body.Force)
 	record.Msg = warmupMessage(record)
@@ -398,7 +404,7 @@ func (a *app) renderStatusPage() []byte {
     }
     .cwp-fields { display: grid; gap: 13px; }
     .cwp-settings-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 13px; align-items: start; }
-    .cwp-model-field { grid-column: 1 / -1; }
+    .cwp-auth-model { min-width: 190px; max-width: 260px; }
     .cwp-wide-field { grid-column: 1 / -1; }
     .cwp-actions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
     .cwp-actions button { width: auto; }
@@ -542,7 +548,6 @@ func (a *app) renderStatusPage() []byte {
       .cwp-layout { display: grid; grid-template-columns: 1fr; }
       .cwp-side { width: auto; }
       .cwp-settings-grid { grid-template-columns: 1fr; }
-      .cwp-model-field { grid-column: auto; }
       .cwp-wide-field { grid-column: auto; }
       .cwp-actions { display: grid; }
       .cwp-actions button { width: 100%; }
@@ -589,6 +594,7 @@ func (a *app) renderStatusPage() []byte {
                   <th>认证文件</th>
                   <th>账号</th>
                   <th>状态</th>
+                  <th data-warmup-column>预热模型</th>
                   <th data-warmup-column>最近成功</th>
                   <th data-warmup-column>最近预热</th>
                   <th data-warmup-column>操作</th>
@@ -615,10 +621,6 @@ func (a *app) renderStatusPage() []byte {
               <p class="cwp-muted">插件会在每个目标时间前 1 分钟内发送。如果同一认证文件距离上次成功不足 5 小时，会在该 1 分钟窗口内等待；等不到就跳过，避免未满 5 小时就重复触发。</p>
             </div>
             <div class="cwp-settings-grid">
-              <label class="cwp-model-field"><span>模型</span>
-                <textarea id="model" spellcheck="false" placeholder="gpt-6-luna, claude-sonnet-4-6"></textarea>
-                <span class="cwp-muted">可填多个模型，支持逗号、中文逗号、顿号、分号或换行分隔。若凭证属于不同渠道（如 Kimi、Claude、GPT、Gemini 等），插件将自动识别对应渠道的可用模型进行预热。</span>
-              </label>
               <label><span>最小间隔</span>
                 <input id="minInterval" spellcheck="false" placeholder="5h">
               </label>
@@ -650,7 +652,7 @@ func (a *app) renderStatusPage() []byte {
               <div class="cwp-actions" style="margin-top: 9px;">
                 <button id="addPushTime" type="button" class="cwp-secondary">添加时间</button>
               </div>
-              <p class="cwp-muted">按额度推送凭证汇总 GPT / Claude 实际窗口和 Devin 日 / 周限额，仅工作日到点推送。预览和立即推送使用已保存的额度设置。</p>
+              <p class="cwp-muted">按已选凭证类型分组汇总实际额度窗口，仅工作日到点推送。无额度数据、查询失败或暂不支持查询的类型也会显示分组说明。预览和立即推送使用已保存的额度设置。</p>
             </div>
             <div class="cwp-actions">
               <button id="refreshUsage" type="button" class="cwp-secondary">预览额度</button>
@@ -698,7 +700,7 @@ func (a *app) renderStatusPage() []byte {
       usagePush: '/v0/management/cpa-window-primer/usage-push'
     };
     const MANAGEMENT_KEY_STORAGE = 'cpa-window-primer.management-key';
-    const state = { snapshot: normalizeSnapshot(INITIAL_DATA), activeSettings: 'warmup' };
+    const state = { snapshot: normalizeSnapshot(INITIAL_DATA), activeSettings: 'warmup', authModels: new Map(), modelsRefreshing: false };
 
     function normalizeSnapshot(input) {
       const data = input || {};
@@ -710,6 +712,7 @@ func (a *app) renderStatusPage() []byte {
           usage_auth_ids: Array.isArray(config.usage_auth_ids) ? config.usage_auth_ids : (Array.isArray(config.auth_ids) ? config.auth_ids.slice() : []),
           times: Array.isArray(config.times) && config.times.length ? config.times : DEFAULT_TIMES.slice(),
           model: config.model || DEFAULT_MODEL,
+          auth_models: Object.assign(Object.create(null), config.auth_models || {}),
           prompt: config.prompt || 'hi',
           min_interval: config.min_interval || '5h',
           lead_time: config.lead_time || '1m',
@@ -750,8 +753,8 @@ func (a *app) renderStatusPage() []byte {
       field('batchWarmup').hidden = usage;
       field('authSectionTitle').textContent = usage ? '额度推送凭证' : '预热凭证';
       field('authSelectionHelp').textContent = usage
-        ? '选择参与额度预览和推送的 CPA 凭证，不影响预热选择。支持 Codex / Claude / Devin。'
-        : '选择参与定时预热的 CPA 凭证，与额度推送独立保存。支持各类凭证（如 Codex / Devin / Kimi 等）。';
+        ? '选择参与额度预览和推送的 CPA 凭证，按所选凭证类型归类，不影响预热选择。'
+        : '选择参与定时预热的 CPA 凭证，并在每行下拉框中选择该凭证可用的模型。保存后用于定时预热，立即预热可直接试用当前选择。';
       field('saveConfig').textContent = usage ? '保存额度推送设置' : '保存预热设置';
       for (const section of ['warmup', 'usage']) {
         const button = field(section + 'Tab');
@@ -897,7 +900,7 @@ func (a *app) renderStatusPage() []byte {
         return '预热失败：' + model + '暂时繁忙，请稍后重试或更换模型。';
       }
       if (/model_not_found|model not found|unknown provider for model|unknown model|unsupported model|invalid model|not a valid model|no such model/i.test(text)) {
-        return '预热失败：' + model + '不可用。请在“预热设置 → 模型”中改为 CPA 当前提供且该账号支持的模型，然后重试。';
+        return '预热失败：' + model + '不可用。请在凭证列表的“预热模型”下拉框中重新选择该账号支持的模型，然后重试。';
       }
       if (/failed to fetch|networkerror|network error|load failed/i.test(text)) {
         return '预热失败：无法连接 CPA，请检查网络及服务地址后重试。';
@@ -1019,7 +1022,7 @@ func (a *app) renderStatusPage() []byte {
         ['预热凭证', selectedCount + ' 个'],
         ['额度推送凭证', usageCount + ' 个'],
         ['发送窗口', (config.times || []).join(' / ') || '未配置'],
-        ['预热模型', config.model || DEFAULT_MODEL],
+        ['预热模型', uniqueSorted((config.auth_ids || []).map((id) => config.auth_models[id])).join(' / ') || '在凭证列表中选择'],
         ['最小间隔', config.min_interval || '5h'],
         ['额度推送时间', (config.usage_push_times || []).join(' / ') || '未配置']
       ];
@@ -1045,7 +1048,6 @@ func (a *app) renderStatusPage() []byte {
       const config = state.snapshot.config;
       if (!section || section === 'warmup') {
         field('enabled').checked = config.enabled !== false;
-        field('model').value = config.model || DEFAULT_MODEL;
         field('prompt').value = config.prompt || 'hi';
         field('minInterval').value = config.min_interval || '5h';
         field('leadTime').value = config.lead_time || '1m';
@@ -1112,7 +1114,8 @@ func (a *app) renderStatusPage() []byte {
         auth_ids: (state.snapshot.config.auth_ids || []).slice(),
         usage_auth_ids: (state.snapshot.config.usage_auth_ids || []).slice(),
         times: collectTimes(),
-        model: field('model').value.trim() || DEFAULT_MODEL,
+        model: state.snapshot.config.model,
+        auth_models: { ...state.snapshot.config.auth_models },
         prompt: field('prompt').value.trim() || 'hi',
         min_interval: field('minInterval').value.trim() || '5h',
         lead_time: field('leadTime').value.trim() || '1m',
@@ -1128,7 +1131,8 @@ func (a *app) renderStatusPage() []byte {
       if (state.activeSettings === 'warmup') {
         if (config.enabled && !config.auth_ids.length) missing.push('预热认证文件');
         if (!config.times.length) missing.push('发送窗口');
-        if (!config.model) missing.push('模型');
+        const modelMissing = config.auth_ids.some((id) => !selectedAuthModel(id));
+        if (config.enabled && modelMissing) missing.push('所选凭证的可用预热模型（请先加载模型列表）');
         if (!config.prompt) missing.push('预热内容');
         if (!config.min_interval) missing.push('最小间隔');
         if (!config.lead_time) missing.push('提前触发窗口');
@@ -1151,7 +1155,7 @@ func (a *app) renderStatusPage() []byte {
       if (!state.snapshot.auths.length) {
         const tr = document.createElement('tr');
         const td = createCell('没有找到可管理的凭证，请先在 CPA 中添加。');
-        td.colSpan = state.activeSettings === 'usage' ? 5 : 8;
+        td.colSpan = state.activeSettings === 'usage' ? 5 : 9;
         tr.appendChild(td);
         body.appendChild(tr);
         return;
@@ -1214,6 +1218,41 @@ func (a *app) renderStatusPage() []byte {
           statusTd.appendChild(detail);
         }
         tr.appendChild(statusTd);
+        const modelTd = document.createElement('td');
+        modelTd.hidden = state.activeSettings === 'usage';
+        const modelSelect = document.createElement('select');
+        modelSelect.className = 'cwp-auth-model';
+        modelSelect.dataset.authId = auth.id;
+        modelSelect.setAttribute('aria-label', (auth.email || auth.name || auth.id) + ' 的预热模型');
+        const modelInfo = state.authModels.get(auth.id);
+        const models = modelInfo && modelInfo.models || [];
+        const savedModel = state.snapshot.config.auth_models[auth.id] || '';
+        if (!models.length || (savedModel && !models.includes(savedModel))) {
+          const placeholder = document.createElement('option');
+          placeholder.value = savedModel;
+          placeholder.textContent = savedModel ? savedModel + '（待确认可用性）'
+            : modelInfo && modelInfo.error ? modelInfo.error
+            : modelInfo && modelInfo.loading ? '正在加载模型…'
+            : modelInfo ? '暂无可用模型' : '填写管理密钥后加载';
+          if (savedModel && modelInfo && !modelInfo.loading && !modelInfo.error) placeholder.textContent = savedModel + '（当前不可用）';
+          placeholder.disabled = true;
+          modelSelect.appendChild(placeholder);
+        }
+        for (const model of models) {
+          const option = document.createElement('option');
+          option.value = model;
+          option.textContent = model;
+          modelSelect.appendChild(option);
+        }
+        modelSelect.value = savedModel;
+        modelSelect.disabled = !selectable || !models.length || !!(modelInfo && modelInfo.loading);
+        modelSelect.addEventListener('change', () => {
+          state.snapshot.config.auth_models[auth.id] = modelSelect.value;
+          renderOverview();
+        });
+        modelTd.appendChild(modelSelect);
+        if (modelInfo && modelInfo.error) modelSelect.title = modelInfo.error;
+        tr.appendChild(modelTd);
         const successTd = createCell(formatTime(itemState.last_success_at));
         successTd.hidden = state.activeSettings === 'usage';
         tr.appendChild(successTd);
@@ -1253,6 +1292,64 @@ func (a *app) renderStatusPage() []byte {
       renderAuths();
     }
 
+    function selectedAuthModel(authID) {
+      const model = state.snapshot.config.auth_models[authID] || '';
+      const info = state.authModels.get(authID);
+      return info && !info.loading && !info.error && info.models.includes(model) ? model : '';
+    }
+
+    async function loadAuthModels(force = false) {
+      const key = field('managementKey').value.trim();
+      if (!key || state.modelsRefreshing) return;
+      const auths = state.snapshot.auths.filter((auth) => {
+        const info = state.authModels.get(auth.id);
+        return auth.selectable !== false && (force || !info || Date.now() - info.loadedAt > 60000);
+      });
+      if (!auths.length) return;
+      state.modelsRefreshing = true;
+      let nextIndex = 0;
+      for (const auth of auths) {
+        const previous = state.authModels.get(auth.id);
+        state.authModels.set(auth.id, { models: previous && previous.models || [], loading: true });
+      }
+      renderAuths();
+      async function worker() {
+        while (nextIndex < auths.length) {
+          const auth = auths[nextIndex++];
+          let info;
+          try {
+            const response = await fetch('/v0/management/auth-files/models?name=' + encodeURIComponent(auth.id), {
+              headers: authHeaders()
+            });
+            const data = await readJSON(response);
+            if (!response.ok) throw new Error(formatError(data, '模型加载失败'));
+            if (!Array.isArray(data.models)) throw new Error('模型列表格式不正确');
+            const models = Array.from(new Set(data.models.map((model) => typeof model === 'string' ? model : model.id).filter(Boolean)));
+            info = { models, loadedAt: Date.now() };
+          } catch (error) {
+            info = { models: [], error: '模型加载失败，请刷新状态重试', loadedAt: Date.now() };
+          }
+          if (field('managementKey').value.trim() !== key) continue;
+          state.authModels.set(auth.id, info);
+          if (!state.snapshot.config.auth_models[auth.id] && info.models.length) {
+            const legacy = String(state.snapshot.config.model || '').split(/[,，、;；\r\n\t]/).map((model) => model.trim());
+            state.snapshot.config.auth_models[auth.id] = legacy.find((model) => info.models.includes(model)) || info.models[0];
+          }
+        }
+      }
+      try {
+        await Promise.all(Array.from({ length: Math.min(4, auths.length) }, () => worker()));
+      } finally {
+        state.modelsRefreshing = false;
+        renderAuths();
+        renderOverview();
+        if (field('managementKey').value.trim() !== key) {
+          state.authModels.clear();
+          await loadAuthModels(true);
+        }
+      }
+    }
+
     function restoreManagementKey() {
       const input = field('managementKey');
       if (!input.value) {
@@ -1278,6 +1375,7 @@ func (a *app) renderStatusPage() []byte {
         } else {
           renderAll();
         }
+        await loadAuthModels(!preserveForm);
         if (showMessage) setStatus('状态已刷新。');
       } catch (error) {
         if (error.connectionStatus) return;
@@ -1317,7 +1415,7 @@ func (a *app) renderStatusPage() []byte {
         empty.className = 'cwp-muted';
         empty.textContent = data && Array.isArray(data.errors) && data.errors.length
           ? '额度读取失败，请检查认证文件或 CPA 管理密钥。'
-          : '暂无额度数据，请先保存额度推送凭证（Codex / Claude / Devin）。';
+          : '暂无额度数据，请先保存额度推送凭证。';
         box.appendChild(empty);
         renderUsageErrors(box, data && data.errors);
         return;
@@ -1339,6 +1437,12 @@ func (a *app) renderStatusPage() []byte {
           for (const line of lines) {
             box.appendChild(usageLine(line.label, line.percent, line.reset));
           }
+        }
+        if (g.status) {
+          const status = document.createElement('div');
+          status.className = 'cwp-muted';
+          status.textContent = g.status;
+          box.appendChild(status);
         }
       }
       renderUsageErrors(box, data && data.errors);
@@ -1446,7 +1550,7 @@ func (a *app) renderStatusPage() []byte {
     function configForSection(config, section) {
       const keys = section === 'usage'
         ? ['usage_auth_ids', 'usage_push_enabled', 'usage_push_times', 'webhook_url']
-        : ['enabled', 'auth_ids', 'times', 'model', 'prompt', 'min_interval', 'lead_time', 'tick_interval'];
+        : ['enabled', 'auth_ids', 'auth_models', 'times', 'prompt', 'min_interval', 'lead_time', 'tick_interval'];
       return Object.fromEntries(keys.map((key) => [key, config[key]]));
     }
 
@@ -1478,10 +1582,12 @@ func (a *app) renderStatusPage() []byte {
     }
 
     async function runWarmupRequest(authID, force) {
+      const model = selectedAuthModel(authID);
+      if (!model) throw new Error('请先在凭证列表中加载并选择该账号可用的预热模型。');
       const response = await fetch(ENDPOINTS.run, {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ auth_id: authID, force: force === true })
+        body: JSON.stringify({ auth_id: authID, force: force === true, model })
       });
       const data = await readJSON(response);
       if (!response.ok) {
@@ -1593,6 +1699,7 @@ func (a *app) renderStatusPage() []byte {
       saveStoredManagementKey(field('managementKey').value.trim());
       clearStatus();
     });
+    field('managementKey').addEventListener('change', () => loadAuthModels(true));
     field('addTime').addEventListener('click', () => addTimeRow('timeList', 'cwp-time-input', '07:00'));
     field('resetTimes').addEventListener('click', () => renderTimes(DEFAULT_TIMES));
     field('addPushTime').addEventListener('click', () => addTimeRow('pushTimeList', 'cwp-push-time-input', '09:00'));
@@ -1611,6 +1718,7 @@ func (a *app) renderStatusPage() []byte {
     });
     restoreManagementKey();
     renderAll();
+    loadAuthModels();
     setInterval(() => {
       if (!document.hidden && field('managementKey').value.trim()) {
         refreshSnapshot(false, true);

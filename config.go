@@ -13,17 +13,18 @@ import (
 )
 
 type pluginConfig struct {
-	Enabled      bool     `json:"enabled" yaml:"enabled"`
-	AuthIDs      []string `json:"auth_ids" yaml:"auth_ids"`
-	UsageAuthIDs []string `json:"usage_auth_ids" yaml:"usage_auth_ids"`
-	Times        []string `json:"times" yaml:"times"`
-	Model        string   `json:"model" yaml:"model"`
-	Prompt       string   `json:"prompt" yaml:"prompt"`
-	MinInterval  string   `json:"min_interval" yaml:"min_interval"`
-	LeadTime     string   `json:"lead_time" yaml:"lead_time"`
-	TickInterval string   `json:"tick_interval" yaml:"tick_interval"`
-	StatePath    string   `json:"state_path" yaml:"state_path"`
-	ConfigPath   string   `json:"config_path" yaml:"config_path"`
+	Enabled      bool              `json:"enabled" yaml:"enabled"`
+	AuthIDs      []string          `json:"auth_ids" yaml:"auth_ids"`
+	UsageAuthIDs []string          `json:"usage_auth_ids" yaml:"usage_auth_ids"`
+	AuthModels   map[string]string `json:"auth_models" yaml:"auth_models"`
+	Times        []string          `json:"times" yaml:"times"`
+	Model        string            `json:"model" yaml:"model"`
+	Prompt       string            `json:"prompt" yaml:"prompt"`
+	MinInterval  string            `json:"min_interval" yaml:"min_interval"`
+	LeadTime     string            `json:"lead_time" yaml:"lead_time"`
+	TickInterval string            `json:"tick_interval" yaml:"tick_interval"`
+	StatePath    string            `json:"state_path" yaml:"state_path"`
+	ConfigPath   string            `json:"config_path" yaml:"config_path"`
 	// 额度推送相关配置。
 	WebhookURL       string   `json:"webhook_url" yaml:"webhook_url"`
 	UsagePushEnabled bool     `json:"usage_push_enabled" yaml:"usage_push_enabled"`
@@ -31,20 +32,21 @@ type pluginConfig struct {
 }
 
 type pluginConfigPatch struct {
-	Enabled          *bool     `json:"enabled"`
-	AuthIDs          *[]string `json:"auth_ids"`
-	UsageAuthIDs     *[]string `json:"usage_auth_ids"`
-	Times            *[]string `json:"times"`
-	Model            *string   `json:"model"`
-	Prompt           *string   `json:"prompt"`
-	MinInterval      *string   `json:"min_interval"`
-	LeadTime         *string   `json:"lead_time"`
-	TickInterval     *string   `json:"tick_interval"`
-	StatePath        *string   `json:"state_path"`
-	ConfigPath       *string   `json:"config_path"`
-	WebhookURL       *string   `json:"webhook_url"`
-	UsagePushEnabled *bool     `json:"usage_push_enabled"`
-	UsagePushTimes   *[]string `json:"usage_push_times"`
+	Enabled          *bool              `json:"enabled"`
+	AuthIDs          *[]string          `json:"auth_ids"`
+	UsageAuthIDs     *[]string          `json:"usage_auth_ids"`
+	AuthModels       *map[string]string `json:"auth_models"`
+	Times            *[]string          `json:"times"`
+	Model            *string            `json:"model"`
+	Prompt           *string            `json:"prompt"`
+	MinInterval      *string            `json:"min_interval"`
+	LeadTime         *string            `json:"lead_time"`
+	TickInterval     *string            `json:"tick_interval"`
+	StatePath        *string            `json:"state_path"`
+	ConfigPath       *string            `json:"config_path"`
+	WebhookURL       *string            `json:"webhook_url"`
+	UsagePushEnabled *bool              `json:"usage_push_enabled"`
+	UsagePushTimes   *[]string          `json:"usage_push_times"`
 }
 
 type runtimeConfig struct {
@@ -114,6 +116,7 @@ func normalizeConfig(cfg pluginConfig) (runtimeConfig, error) {
 		cfg.TickInterval = defaultTick
 	}
 	cfg.AuthIDs = uniqueTrimmed(cfg.AuthIDs)
+	cfg.AuthModels = normalizeAuthModels(cfg.AuthModels)
 	// 旧配置没有独立额度凭证时只迁移一次；显式 [] 表示清空，不能回退到预热凭证。
 	if cfg.UsageAuthIDs == nil {
 		cfg.UsageAuthIDs = append([]string{}, cfg.AuthIDs...)
@@ -253,6 +256,9 @@ func mergeConfigPatch(current pluginConfig, raw []byte) (pluginConfig, error) {
 	if patch.UsageAuthIDs != nil {
 		next.UsageAuthIDs = append([]string{}, (*patch.UsageAuthIDs)...)
 	}
+	if patch.AuthModels != nil {
+		next.AuthModels = normalizeAuthModels(*patch.AuthModels)
+	}
 	if patch.Times != nil {
 		next.Times = append([]string(nil), (*patch.Times)...)
 	}
@@ -293,7 +299,7 @@ func validateConfigPatchForSave(cfg pluginConfig, raw []byte) error {
 	var warmup, usage bool
 	for key := range fields {
 		switch key {
-		case "enabled", "auth_ids", "times", "model", "prompt", "min_interval", "lead_time", "tick_interval":
+		case "enabled", "auth_ids", "auth_models", "times", "model", "prompt", "min_interval", "lead_time", "tick_interval":
 			warmup = true
 		case "usage_auth_ids", "usage_push_enabled", "usage_push_times", "webhook_url":
 			usage = true
@@ -310,9 +316,6 @@ func validateConfigSections(cfg pluginConfig, warmup, usage bool) error {
 		}
 		if len(uniqueTrimmed(cfg.Times)) == 0 {
 			missing = append(missing, "发送窗口")
-		}
-		if strings.TrimSpace(cfg.Model) == "" {
-			missing = append(missing, "模型")
 		}
 		if strings.TrimSpace(cfg.Prompt) == "" {
 			missing = append(missing, "预热内容")
@@ -342,6 +345,24 @@ func validateConfigSections(cfg pluginConfig, warmup, usage bool) error {
 		return fmt.Errorf("请填写必填项：%s", strings.Join(missing, "、"))
 	}
 	return nil
+}
+
+func normalizeAuthModels(models map[string]string) map[string]string {
+	out := make(map[string]string, len(models))
+	for id, model := range models {
+		id, model = strings.TrimSpace(id), strings.TrimSpace(model)
+		if id != "" && model != "" {
+			out[id] = model
+		}
+	}
+	return out
+}
+
+func configuredModelsForAuth(cfg runtimeConfig, authID string) []string {
+	if model := strings.TrimSpace(cfg.AuthModels[authID]); model != "" {
+		return []string{model}
+	}
+	return parseModelList(cfg.Model)
 }
 
 func saveConfigOverride(path string, cfg pluginConfig) error {
