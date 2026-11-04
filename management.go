@@ -53,23 +53,24 @@ type managementSnapshot struct {
 }
 
 type managementAuthView struct {
-	ID                string     `json:"id"`
-	AuthIndex         string     `json:"auth_index,omitempty"`
-	Name              string     `json:"name"`
-	Type              string     `json:"type"`
-	Provider          string     `json:"provider,omitempty"`
-	Status            string     `json:"status,omitempty"`
-	StatusMessage     string     `json:"status_message,omitempty"`
-	Email             string     `json:"email,omitempty"`
-	Label             string     `json:"label,omitempty"`
-	Source            string     `json:"source,omitempty"`
-	Selectable        bool       `json:"selectable"`
-	Unavailable       bool       `json:"unavailable,omitempty"`
-	Disabled          bool       `json:"disabled,omitempty"`
-	NextRetryAfter    *time.Time `json:"next_retry_after,omitempty"`
-	QuotaBlockedUntil *time.Time `json:"quota_blocked_until,omitempty"`
-	BlockedReason     string     `json:"blocked_reason,omitempty"`
-	ModelPrefix       string     `json:"model_prefix,omitempty"`
+	ID                string                      `json:"id"`
+	AuthIndex         string                      `json:"auth_index,omitempty"`
+	Name              string                      `json:"name"`
+	Type              string                      `json:"type"`
+	Provider          string                      `json:"provider,omitempty"`
+	Status            string                      `json:"status,omitempty"`
+	StatusMessage     string                      `json:"status_message,omitempty"`
+	Email             string                      `json:"email,omitempty"`
+	Label             string                      `json:"label,omitempty"`
+	Source            string                      `json:"source,omitempty"`
+	Selectable        bool                        `json:"selectable"`
+	Unavailable       bool                        `json:"unavailable,omitempty"`
+	Disabled          bool                        `json:"disabled,omitempty"`
+	NextRetryAfter    *time.Time                  `json:"next_retry_after,omitempty"`
+	QuotaBlockedUntil *time.Time                  `json:"quota_blocked_until,omitempty"`
+	BlockedReason     string                      `json:"blocked_reason,omitempty"`
+	ModelPrefix       string                      `json:"model_prefix,omitempty"`
+	ModelRoutes       map[string]warmupModelRoute `json:"model_routes,omitempty"`
 }
 
 func managementRegistration() managementRegistrationResponse {
@@ -272,9 +273,12 @@ func (a *app) managementSnapshot() managementSnapshot {
 			quotaBlockedUntil = &until
 		}
 		modelPrefix := ""
+		var modelRoutes map[string]warmupModelRoute
 		if formatAuthType(auth) == factoryProvider {
 			if doc, err := authDocumentForAuth(auth.AuthIndex); err == nil {
 				modelPrefix = stringValue(doc["prefix"])
+				// 只返回当前凭证的模型协议元数据，不暴露原始凭证或依赖其他插件的管理接口。
+				modelRoutes = factoryCatalogRoutes(doc)
 			}
 		}
 		rows = append(rows, managementAuthView{
@@ -297,6 +301,7 @@ func (a *app) managementSnapshot() managementSnapshot {
 			QuotaBlockedUntil: quotaBlockedUntil,
 			BlockedReason:     blockedReason,
 			ModelPrefix:       modelPrefix,
+			ModelRoutes:       modelRoutes,
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -1281,6 +1286,15 @@ func (a *app) renderStatusPage() []byte {
         });
         modelTd.appendChild(modelSelect);
         if (modelInfo && modelInfo.error) modelSelect.title = modelInfo.error;
+        const routeError = modelInfo && (modelInfo.routeError ||
+          (auth.type === 'factory-droid' && !modelInfo.loading && models.includes(savedModel) &&
+            !selectedModelRoute(auth.id) ? '无法确认所选模型的原生协议，请刷新状态后重试。' : ''));
+        if (routeError) {
+          const detail = document.createElement('div');
+          detail.className = 'cwp-muted';
+          detail.textContent = routeError;
+          modelTd.appendChild(detail);
+        }
         tr.appendChild(modelTd);
         const successTd = createCell(formatTime(itemState.last_success_at));
         successTd.hidden = state.activeSettings === 'usage';
@@ -1339,33 +1353,29 @@ func (a *app) renderStatusPage() []byte {
       else delete state.snapshot.config.auth_model_routes[authID];
     }
 
-    async function loadFactoryCatalog() {
-      const responses = await Promise.all([
-        fetch('/v0/management/plugins/factory-droid/models', { headers: authHeaders() }),
-        fetch('/v0/management/oauth-model-alias', { headers: authHeaders() })
-      ]);
-      const data = await Promise.all(responses.map(readJSON));
-      if (responses.some((response) => !response.ok)) throw new Error('Factory 模型协议加载失败');
-      const catalog = data[0].data || data[0];
-      if (!Array.isArray(catalog.models)) throw new Error('Factory 模型协议响应格式不正确');
-      const aliases = data[1]['oauth-model-alias'] || {};
-      return { models: catalog.models, aliases: Array.isArray(aliases['factory-droid']) ? aliases['factory-droid'] : [] };
+    async function loadFactoryAliases() {
+      const response = await fetch('/v0/management/oauth-model-alias', { headers: authHeaders() });
+      const data = await readJSON(response);
+      if (!response.ok) throw new Error('Factory 模型别名读取失败，请刷新状态重试。');
+      const aliases = data['oauth-model-alias'] || {};
+      return Array.isArray(aliases['factory-droid']) ? aliases['factory-droid'] : [];
     }
 
-    function factoryModelRoutes(auth, models, catalog) {
+    function factoryModelRoutes(auth, models, aliases) {
       const routes = Object.create(null);
       const prefix = String(auth.model_prefix || '').replace(/^\/+|\/+$/g, '');
+      const catalog = Object.entries(auth.model_routes || {});
       for (const selected of models) {
         const lookup = prefix && selected.startsWith(prefix + '/') ? selected.slice(prefix.length + 1) : selected;
-        const aliases = catalog.aliases.filter((alias) => alias.alias === lookup);
-        const sourceNames = aliases.length ? aliases.map((alias) => alias.name) : [lookup];
-        const matches = catalog.models.filter((model) =>
-          sourceNames.some((name) => model.id === name || model.upstream_id === name) &&
-          ['anthropic', 'responses', 'chat_completions'].includes(model.protocol) &&
-          ['standard', 'core'].includes(model.quota_pool));
+        const mapped = aliases.filter((alias) => alias.alias === lookup);
+        const sourceNames = mapped.length ? mapped.map((alias) => alias.name) : [lookup];
+        const matches = catalog.filter(([canonical, route]) =>
+          sourceNames.some((name) => canonical === name || canonical === 'factory/' + name) &&
+          ['anthropic', 'responses', 'chat_completions'].includes(route.protocol) &&
+          ['standard', 'core'].includes(route.quota_pool));
         if (matches.length === 1) {
-          const model = matches[0];
-          routes[selected] = { model: selected, canonical_model: model.id, protocol: model.protocol, quota_pool: model.quota_pool };
+          const [canonical, route] = matches[0];
+          routes[selected] = { model: selected, canonical_model: canonical, protocol: route.protocol, quota_pool: route.quota_pool };
         }
       }
       return routes;
@@ -1380,8 +1390,8 @@ func (a *app) renderStatusPage() []byte {
       });
       if (!auths.length) return;
       state.modelsRefreshing = true;
-      const factoryCatalog = auths.some((auth) => auth.type === 'factory-droid')
-        ? loadFactoryCatalog().then((data) => ({ data }), () => ({ error: true }))
+      const factoryAliases = auths.some((auth) => auth.type === 'factory-droid')
+        ? loadFactoryAliases().then((data) => ({ data }), () => ({ error: 'Factory 模型别名读取失败，请刷新状态重试。' }))
         : null;
       let nextIndex = 0;
       for (const auth of auths) {
@@ -1402,13 +1412,13 @@ func (a *app) renderStatusPage() []byte {
             if (!Array.isArray(data.models)) throw new Error('模型列表格式不正确');
             const models = Array.from(new Set(data.models.map((model) => typeof model === 'string' ? model : model.id).filter(Boolean)));
             info = { models, loadedAt: Date.now() };
-            if (auth.type === 'factory-droid') {
-              const catalog = await factoryCatalog;
-              if (!catalog || catalog.error) throw new Error('Factory 模型协议加载失败');
-              info.routes = factoryModelRoutes(auth, models, catalog.data);
-            }
           } catch (error) {
             info = { models: [], error: '模型加载失败，请刷新状态重试', loadedAt: Date.now() };
+          }
+          if (auth.type === 'factory-droid' && !info.error) {
+            const aliases = await factoryAliases;
+            if (aliases.error) info.routeError = aliases.error;
+            else info.routes = factoryModelRoutes(auth, info.models, aliases.data);
           }
           if (field('managementKey').value.trim() !== key) continue;
           state.authModels.set(auth.id, info);

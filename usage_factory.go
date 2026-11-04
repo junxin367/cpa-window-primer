@@ -217,34 +217,3 @@ func factoryPoolBlock(pool factoryQuotaPool, now time.Time) usageQuotaBlock {
 	}
 	return usageQuotaBlock{}
 }
-
-func factoryExtraGroups(entries []usageEntry) []usageGroupView {
-	var coreEntries []usageEntry
-	var balance float64
-	var balances int
-	for _, entry := range entries {
-		if entry.Err != "" || entry.Factory == nil {
-			continue
-		}
-		core := entry.Factory.Core
-		if factoryPoolHasData(core) {
-			coreEntries = append(coreEntries, usageEntry{Provider: factoryProvider, Weight: entry.Weight,
-				Primary: core.Primary, Secondary: core.Secondary, Monthly: core.Monthly})
-		}
-		if entry.Factory.ExtraBalance != nil {
-			balance += *entry.Factory.ExtraBalance
-			balances++
-		}
-	}
-	var groups []usageGroupView
-	if len(coreEntries) > 0 {
-		group := groupView(factoryProvider, "FACTORY Droid Core", aggregateGroup(coreEntries, false))
-		group.Kind, group.AuthCount = "core", len(coreEntries)
-		groups = append(groups, group)
-	}
-	if balances > 0 {
-		groups = append(groups, usageGroupView{Provider: factoryProvider, Label: "FACTORY 额外余额", Kind: "balance",
-			AuthCount: balances, HasData: true, Status: fmt.Sprintf("已知额外用量余额：$%.2f（%d 个凭证）", balance, balances)})
-	}
-	return groups
-}

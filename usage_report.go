@@ -413,9 +413,6 @@ func usageGroups(entries []usageEntry) []usageGroupView {
 			group.Status += fmt.Sprintf("%d/%d 个凭证查询失败或暂不支持额度查询", group.FailedCount, group.AuthCount)
 		}
 		groups = append(groups, group)
-		if provider == factoryProvider {
-			groups = append(groups, factoryExtraGroups(entries)...)
-		}
 	}
 	return groups
 }
