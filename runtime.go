@@ -377,7 +377,11 @@ func (a *app) executeWarmup(authID, windowKey string, cfg runtimeConfig, hostCal
 		usedDirectCodex := false
 		targetNotUsed := false
 		targetVerifyFailed := false
-		resp, err = executeHostWarmup(authID, model, cfg.Prompt, hostCallbackID)
+		if target.Provider == factoryProvider {
+			resp, err = executeFactoryWarmup(target, model, cfg.Prompt, hostCallbackID, cfg.AuthModelRoutes[authID])
+		} else {
+			resp, err = executeHostWarmup(authID, model, cfg.Prompt, hostCallbackID)
+		}
 		if isTargetAuthNotCandidate(err) && target.Provider == "codex" {
 			// scheduler 只暴露最高优先级候选，改用目标 OAuth token 直连。
 			resp, err = executeCodexDirectWarmup(target, model, cfg.Prompt, hostCallbackID)
@@ -531,7 +535,7 @@ func (a *app) reconcileQuotaBlockFromUsage(authID, windowKey string, cfg runtime
 	if modelText == "" {
 		modelText = cfg.Model
 	}
-	if usage.Err != "" || (!usage.Primary.HasData && !usage.Secondary.HasData && !usage.Daily.HasData) {
+	if usage.Err != "" || !usageHasQuotaData(usage) {
 		a.mu.Lock()
 		until, reason, blocked := a.state.quotaBlockInfo(authID, now)
 		if !blocked {
@@ -555,6 +559,9 @@ func (a *app) reconcileQuotaBlockFromUsage(authID, windowKey string, cfg runtime
 		return record, true
 	}
 
+	if usage.Provider == factoryProvider {
+		models = factoryQuotaModelPools(usage, models, cfg.AuthModelRoutes[authID])
+	}
 	block := usageQuotaBlocked(usage, models, now)
 	a.mu.Lock()
 	defer a.mu.Unlock()

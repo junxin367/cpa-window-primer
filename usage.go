@@ -28,6 +28,8 @@ type usageEntry struct {
 	Primary   usageWindow // 归一化后的 5 小时窗口，不等同于上游 primary_window。
 	Secondary usageWindow // 归一化后的周窗口，不等同于上游 secondary_window。
 	Daily     usageWindow // Devin、Kimi 等提供商的日额度，独立于 5 小时窗口。
+	Monthly   usageWindow // Factory 30 天窗口，独立于周额度。
+	Factory   *factoryUsageData
 	// Sonnet 为 Claude 单独统计的窗口（如有）。
 	SonnetPrimary   usageWindow
 	SonnetSecondary usageWindow
@@ -269,6 +271,8 @@ func fetchAuthUsage(entry pluginapi.HostAuthFileEntry) usageEntry {
 		return fetchDevinUsage(authID, authIndex, entry.Email)
 	case "kimi":
 		return fetchKimiUsage(authID, authIndex, entry.Email)
+	case factoryProvider:
+		return fetchFactoryUsage(authID, authIndex, entry.Email)
 	default:
 		return usageEntry{AuthID: authID, Provider: typ, Err: "unsupported provider"}
 	}
@@ -277,6 +281,9 @@ func fetchAuthUsage(entry pluginapi.HostAuthFileEntry) usageEntry {
 func usageQuotaBlocked(entry usageEntry, models []string, now time.Time) usageQuotaBlock {
 	if entry.Err != "" {
 		return usageQuotaBlock{}
+	}
+	if entry.Provider == factoryProvider {
+		return factoryQuotaBlocked(entry, models, now)
 	}
 	if block := quotaBlockForWindow(entry.Secondary, "周限额已满", now); block.Blocked {
 		return block
@@ -293,6 +300,11 @@ func usageQuotaBlocked(entry usageEntry, models []string, now time.Time) usageQu
 		}
 	}
 	return usageQuotaBlock{}
+}
+
+func usageHasQuotaData(entry usageEntry) bool {
+	return entry.Primary.HasData || entry.Secondary.HasData || entry.Daily.HasData || entry.Monthly.HasData ||
+		(entry.Factory != nil && entry.Factory.ExtraAllowed && entry.Factory.ExtraBalance != nil && *entry.Factory.ExtraBalance > 0)
 }
 
 func quotaBlockForWindow(window usageWindow, reason string, now time.Time) usageQuotaBlock {

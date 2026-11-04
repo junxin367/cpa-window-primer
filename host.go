@@ -35,6 +35,10 @@ type chatMessage struct {
 type hostModelExecutionRequest struct {
 	pluginapi.HostModelExecutionRequest
 	HostCallbackID string `json:"host_callback_id,omitempty"`
+	// v8 宿主字段显式序列化，保留其他提供商原有 v7 SDK 调用兼容性。
+	AuthID         string `json:"auth_id,omitempty"`
+	ForcedProvider string `json:"forced_provider,omitempty"`
+	Path           string `json:"path,omitempty"`
 }
 
 type availableModel struct {
@@ -574,6 +578,8 @@ func formatAuthType(entry pluginapi.HostAuthFileEntry) string {
 	}
 
 	switch {
+	case provider == factoryProvider || typ == factoryProvider:
+		return factoryProvider
 	case detect("devin"):
 		return "devin"
 	case detect("kimi") || detect("moonshot"):
@@ -1020,19 +1026,29 @@ func executeHostWarmup(authID, model, prompt, hostCallbackID string) (pluginapi.
 	if err != nil {
 		return pluginapi.HostModelExecutionResponse{}, err
 	}
+	return callWarmupModel(authID, model, hostCallbackID, "openai", "", "", body)
+}
+
+func callWarmupModel(authID, model, hostCallbackID, protocol, path, provider string, body []byte) (pluginapi.HostModelExecutionResponse, error) {
 	headers := http.Header{}
 	headers.Set(primerHeader, authID)
-	result, err := callHostRPC(pluginabi.MethodHostModelExecute, hostModelExecutionRequest{
+	req := hostModelExecutionRequest{
 		HostModelExecutionRequest: pluginapi.HostModelExecutionRequest{
-			EntryProtocol: "openai",
-			ExitProtocol:  "openai",
+			EntryProtocol: protocol,
+			ExitProtocol:  protocol,
 			Model:         model,
 			Stream:        false,
 			Body:          body,
 			Headers:       headers,
 		},
 		HostCallbackID: hostCallbackID,
-	})
+		Path:           path,
+		ForcedProvider: provider,
+	}
+	if provider != "" {
+		req.AuthID = authID
+	}
+	result, err := callHostRPC(pluginabi.MethodHostModelExecute, req)
 	if err != nil {
 		return pluginapi.HostModelExecutionResponse{}, err
 	}

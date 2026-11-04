@@ -13,18 +13,19 @@ import (
 )
 
 type pluginConfig struct {
-	Enabled      bool              `json:"enabled" yaml:"enabled"`
-	AuthIDs      []string          `json:"auth_ids" yaml:"auth_ids"`
-	UsageAuthIDs []string          `json:"usage_auth_ids" yaml:"usage_auth_ids"`
-	AuthModels   map[string]string `json:"auth_models" yaml:"auth_models"`
-	Times        []string          `json:"times" yaml:"times"`
-	Model        string            `json:"model" yaml:"model"`
-	Prompt       string            `json:"prompt" yaml:"prompt"`
-	MinInterval  string            `json:"min_interval" yaml:"min_interval"`
-	LeadTime     string            `json:"lead_time" yaml:"lead_time"`
-	TickInterval string            `json:"tick_interval" yaml:"tick_interval"`
-	StatePath    string            `json:"state_path" yaml:"state_path"`
-	ConfigPath   string            `json:"config_path" yaml:"config_path"`
+	Enabled         bool                        `json:"enabled" yaml:"enabled"`
+	AuthIDs         []string                    `json:"auth_ids" yaml:"auth_ids"`
+	UsageAuthIDs    []string                    `json:"usage_auth_ids" yaml:"usage_auth_ids"`
+	AuthModels      map[string]string           `json:"auth_models" yaml:"auth_models"`
+	AuthModelRoutes map[string]warmupModelRoute `json:"auth_model_routes,omitempty" yaml:"auth_model_routes,omitempty"`
+	Times           []string                    `json:"times" yaml:"times"`
+	Model           string                      `json:"model" yaml:"model"`
+	Prompt          string                      `json:"prompt" yaml:"prompt"`
+	MinInterval     string                      `json:"min_interval" yaml:"min_interval"`
+	LeadTime        string                      `json:"lead_time" yaml:"lead_time"`
+	TickInterval    string                      `json:"tick_interval" yaml:"tick_interval"`
+	StatePath       string                      `json:"state_path" yaml:"state_path"`
+	ConfigPath      string                      `json:"config_path" yaml:"config_path"`
 	// 额度推送相关配置。
 	WebhookURL       string   `json:"webhook_url" yaml:"webhook_url"`
 	UsagePushEnabled bool     `json:"usage_push_enabled" yaml:"usage_push_enabled"`
@@ -32,21 +33,22 @@ type pluginConfig struct {
 }
 
 type pluginConfigPatch struct {
-	Enabled          *bool              `json:"enabled"`
-	AuthIDs          *[]string          `json:"auth_ids"`
-	UsageAuthIDs     *[]string          `json:"usage_auth_ids"`
-	AuthModels       *map[string]string `json:"auth_models"`
-	Times            *[]string          `json:"times"`
-	Model            *string            `json:"model"`
-	Prompt           *string            `json:"prompt"`
-	MinInterval      *string            `json:"min_interval"`
-	LeadTime         *string            `json:"lead_time"`
-	TickInterval     *string            `json:"tick_interval"`
-	StatePath        *string            `json:"state_path"`
-	ConfigPath       *string            `json:"config_path"`
-	WebhookURL       *string            `json:"webhook_url"`
-	UsagePushEnabled *bool              `json:"usage_push_enabled"`
-	UsagePushTimes   *[]string          `json:"usage_push_times"`
+	Enabled          *bool                        `json:"enabled"`
+	AuthIDs          *[]string                    `json:"auth_ids"`
+	UsageAuthIDs     *[]string                    `json:"usage_auth_ids"`
+	AuthModels       *map[string]string           `json:"auth_models"`
+	AuthModelRoutes  *map[string]warmupModelRoute `json:"auth_model_routes"`
+	Times            *[]string                    `json:"times"`
+	Model            *string                      `json:"model"`
+	Prompt           *string                      `json:"prompt"`
+	MinInterval      *string                      `json:"min_interval"`
+	LeadTime         *string                      `json:"lead_time"`
+	TickInterval     *string                      `json:"tick_interval"`
+	StatePath        *string                      `json:"state_path"`
+	ConfigPath       *string                      `json:"config_path"`
+	WebhookURL       *string                      `json:"webhook_url"`
+	UsagePushEnabled *bool                        `json:"usage_push_enabled"`
+	UsagePushTimes   *[]string                    `json:"usage_push_times"`
 }
 
 type runtimeConfig struct {
@@ -117,6 +119,7 @@ func normalizeConfig(cfg pluginConfig) (runtimeConfig, error) {
 	}
 	cfg.AuthIDs = uniqueTrimmed(cfg.AuthIDs)
 	cfg.AuthModels = normalizeAuthModels(cfg.AuthModels)
+	cfg.AuthModelRoutes = cloneModelRoutes(cfg.AuthModelRoutes)
 	// 旧配置没有独立额度凭证时只迁移一次；显式 [] 表示清空，不能回退到预热凭证。
 	if cfg.UsageAuthIDs == nil {
 		cfg.UsageAuthIDs = append([]string{}, cfg.AuthIDs...)
@@ -259,6 +262,9 @@ func mergeConfigPatch(current pluginConfig, raw []byte) (pluginConfig, error) {
 	if patch.AuthModels != nil {
 		next.AuthModels = normalizeAuthModels(*patch.AuthModels)
 	}
+	if patch.AuthModelRoutes != nil {
+		next.AuthModelRoutes = cloneModelRoutes(*patch.AuthModelRoutes)
+	}
 	if patch.Times != nil {
 		next.Times = append([]string(nil), (*patch.Times)...)
 	}
@@ -299,7 +305,7 @@ func validateConfigPatchForSave(cfg pluginConfig, raw []byte) error {
 	var warmup, usage bool
 	for key := range fields {
 		switch key {
-		case "enabled", "auth_ids", "auth_models", "times", "model", "prompt", "min_interval", "lead_time", "tick_interval":
+		case "enabled", "auth_ids", "auth_models", "auth_model_routes", "times", "model", "prompt", "min_interval", "lead_time", "tick_interval":
 			warmup = true
 		case "usage_auth_ids", "usage_push_enabled", "usage_push_times", "webhook_url":
 			usage = true

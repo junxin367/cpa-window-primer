@@ -134,6 +134,8 @@ func fetchUsageTarget(target usageTarget) usageEntry {
 		return fetchDevinUsage(target.AuthID, target.AuthIndex, target.Email)
 	case "kimi":
 		return fetchKimiUsage(target.AuthID, target.AuthIndex, target.Email)
+	case factoryProvider:
+		return fetchFactoryUsage(target.AuthID, target.AuthIndex, target.Email)
 	default:
 		return usageEntry{AuthID: target.AuthID, Provider: target.Provider, Email: target.Email, Err: "暂不支持拉取该类型的上游额度"}
 	}
@@ -183,12 +185,15 @@ type aggregateResult struct {
 	HasPrimary       bool
 	HasSecondary     bool
 	HasDaily         bool
+	HasMonthly       bool
 	PrimaryPercent   float64
 	PrimaryReset     time.Time
 	SecondaryPercent float64
 	SecondaryReset   time.Time
 	DailyPercent     float64
 	DailyReset       time.Time
+	MonthlyPercent   float64
+	MonthlyReset     time.Time
 }
 
 func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
@@ -199,9 +204,12 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 		secondaryTotalWeight   float64
 		dailyUsedWeighted      float64
 		dailyTotalWeight       float64
+		monthlyUsedWeighted    float64
+		monthlyTotalWeight     float64
 		earliestPrimaryReset   time.Time
 		earliestSecondaryReset time.Time
 		earliestDailyReset     time.Time
+		earliestMonthlyReset   time.Time
 		any                    bool
 	)
 	for _, e := range entries {
@@ -257,6 +265,14 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 			}
 			any = true
 		}
+		if !sonnet && e.Monthly.HasData {
+			monthlyUsedWeighted += e.Monthly.UsedPercent * e.Weight
+			monthlyTotalWeight += e.Weight
+			if earlierReset(earliestMonthlyReset, e.Monthly.ResetAt) {
+				earliestMonthlyReset = e.Monthly.ResetAt
+			}
+			any = true
+		}
 	}
 	res := aggregateResult{HasData: any}
 	if primaryTotalWeight > 0 {
@@ -273,6 +289,11 @@ func aggregateGroup(entries []usageEntry, sonnet bool) aggregateResult {
 		res.HasDaily = true
 		res.DailyPercent = dailyUsedWeighted / dailyTotalWeight
 		res.DailyReset = earliestDailyReset
+	}
+	if monthlyTotalWeight > 0 {
+		res.HasMonthly = true
+		res.MonthlyPercent = monthlyUsedWeighted / monthlyTotalWeight
+		res.MonthlyReset = earliestMonthlyReset
 	}
 	return res
 }
@@ -312,6 +333,8 @@ func groupProviderLabel(provider string) string {
 		return "DEVIN"
 	case "kimi":
 		return "KIMI"
+	case factoryProvider:
+		return "FACTORY 标准额度"
 	case "other":
 		return "其他类型"
 	default:
@@ -330,7 +353,7 @@ func collectProviders(entries []usageEntry) []string {
 			list = append(list, p)
 		}
 	}
-	preferredOrder := []string{"codex", "claude", "devin", "kimi"}
+	preferredOrder := []string{"codex", "claude", "devin", "kimi", factoryProvider}
 	var ordered []string
 	for _, p := range preferredOrder {
 		if seen[p] {
@@ -390,6 +413,9 @@ func usageGroups(entries []usageEntry) []usageGroupView {
 			group.Status += fmt.Sprintf("%d/%d 个凭证查询失败或暂不支持额度查询", group.FailedCount, group.AuthCount)
 		}
 		groups = append(groups, group)
+		if provider == factoryProvider {
+			groups = append(groups, factoryExtraGroups(entries)...)
+		}
 	}
 	return groups
 }
@@ -683,6 +709,9 @@ func groupViewWithExtra(provider, label string, agg aggregateResult, extra []usa
 		}
 		if agg.HasDaily {
 			view.Lines = append(view.Lines, usageMetricView{Label: "日限额", Percent: agg.DailyPercent, Reset: resetText(agg.DailyReset)})
+		}
+		if agg.HasMonthly {
+			view.Lines = append(view.Lines, usageMetricView{Label: "30天限额", Percent: agg.MonthlyPercent, Reset: resetText(agg.MonthlyReset)})
 		}
 		view.Lines = append(view.Lines, extra...)
 	}

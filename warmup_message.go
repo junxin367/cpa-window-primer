@@ -27,6 +27,12 @@ func warmupMessage(record attemptRecord) string {
 		model = fmt.Sprintf("模型「%s」", strings.TrimSpace(record.Model))
 	}
 	switch {
+	case has("factory_model_route_unknown"):
+		return "预热失败：无法确认该 Factory 模型的原生协议，请刷新模型列表并重新保存预热设置。"
+	case has("factory_host_unsupported"):
+		return "预热失败：当前 CPA 内核不支持 Factory 凭证模型查询，请升级至 v8.0.53 或更新版本。"
+	case has("protocol_mismatch", "protocol_guard_missing", "request terminated by plugin"):
+		return "预热失败：请求被插件校验拦截，请检查所选模型的原生协议、请求路径及凭证配置。"
 	case has("selected model is at capacity", "model is at capacity"):
 		return "预热失败：" + model + "暂时繁忙，请稍后重试或更换模型。"
 	case has("model_not_found", "model not found", "unknown provider for model", "unknown model", "unsupported model", "invalid model", "not a valid model", "no such model"):

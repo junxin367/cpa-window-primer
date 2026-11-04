@@ -69,6 +69,7 @@ type managementAuthView struct {
 	NextRetryAfter    *time.Time `json:"next_retry_after,omitempty"`
 	QuotaBlockedUntil *time.Time `json:"quota_blocked_until,omitempty"`
 	BlockedReason     string     `json:"blocked_reason,omitempty"`
+	ModelPrefix       string     `json:"model_prefix,omitempty"`
 }
 
 func managementRegistration() managementRegistrationResponse {
@@ -135,9 +136,10 @@ func (a *app) handleManagement(raw []byte) ([]byte, error) {
 
 func (a *app) handleManualRun(req managementRequest) ([]byte, error) {
 	var body struct {
-		AuthID string `json:"auth_id"`
-		Force  bool   `json:"force"`
-		Model  string `json:"model,omitempty"`
+		AuthID     string            `json:"auth_id"`
+		Force      bool              `json:"force"`
+		Model      string            `json:"model,omitempty"`
+		ModelRoute *warmupModelRoute `json:"model_route,omitempty"`
 	}
 	if len(req.Body) > 0 {
 		if err := json.Unmarshal(req.Body, &body); err != nil {
@@ -173,6 +175,10 @@ func (a *app) handleManualRun(req managementRequest) ([]byte, error) {
 		// 手动操作可试用列表中尚未保存的选择，不改动后台定时配置。
 		cfg.AuthModels = normalizeAuthModels(cfg.AuthModels)
 		cfg.AuthModels[authID] = model
+	}
+	if body.ModelRoute != nil {
+		cfg.AuthModelRoutes = cloneModelRoutes(cfg.AuthModelRoutes)
+		cfg.AuthModelRoutes[authID] = *body.ModelRoute
 	}
 	record := a.executeWarmup(authID, "manual-"+time.Now().Format("20060102T150405"), cfg, req.HostCallbackID, body.Force)
 	record.Msg = warmupMessage(record)
@@ -265,6 +271,12 @@ func (a *app) managementSnapshot() managementSnapshot {
 			until := quotaUntil
 			quotaBlockedUntil = &until
 		}
+		modelPrefix := ""
+		if formatAuthType(auth) == factoryProvider {
+			if doc, err := authDocumentForAuth(auth.AuthIndex); err == nil {
+				modelPrefix = stringValue(doc["prefix"])
+			}
+		}
 		rows = append(rows, managementAuthView{
 			ID:            id,
 			AuthIndex:     auth.AuthIndex,
@@ -284,6 +296,7 @@ func (a *app) managementSnapshot() managementSnapshot {
 			NextRetryAfter:    nextRetryAfter,
 			QuotaBlockedUntil: quotaBlockedUntil,
 			BlockedReason:     blockedReason,
+			ModelPrefix:       modelPrefix,
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -713,6 +726,7 @@ func (a *app) renderStatusPage() []byte {
           times: Array.isArray(config.times) && config.times.length ? config.times : DEFAULT_TIMES.slice(),
           model: config.model || DEFAULT_MODEL,
           auth_models: Object.assign(Object.create(null), config.auth_models || {}),
+          auth_model_routes: Object.assign(Object.create(null), config.auth_model_routes || {}),
           prompt: config.prompt || 'hi',
           min_interval: config.min_interval || '5h',
           lead_time: config.lead_time || '1m',
@@ -896,6 +910,15 @@ func (a *app) renderStatusPage() []byte {
       const raw = (record && (record.error || record.response_summary)) || fallbackError || '';
       const text = decodeErrorText(raw).split('; 模型兜底记录:')[0];
       const model = record && record.model ? '模型「' + record.model + '」' : '所选模型';
+      if (/factory_model_route_unknown/i.test(text)) {
+        return '预热失败：无法确认该 Factory 模型的原生协议，请刷新模型列表并重新保存预热设置。';
+      }
+      if (/factory_host_unsupported/i.test(text)) {
+        return '预热失败：当前 CPA 内核不支持 Factory 凭证模型查询，请升级至 v8.0.53 或更新版本。';
+      }
+      if (/protocol_mismatch|protocol_guard_missing|request terminated by plugin/i.test(text)) {
+        return '预热失败：请求被插件校验拦截，请检查所选模型的原生协议、请求路径及凭证配置。';
+      }
       if (/selected model is at capacity|model is at capacity/i.test(text)) {
         return '预热失败：' + model + '暂时繁忙，请稍后重试或更换模型。';
       }
@@ -1116,6 +1139,7 @@ func (a *app) renderStatusPage() []byte {
         times: collectTimes(),
         model: state.snapshot.config.model,
         auth_models: { ...state.snapshot.config.auth_models },
+        auth_model_routes: { ...state.snapshot.config.auth_model_routes },
         prompt: field('prompt').value.trim() || 'hi',
         min_interval: field('minInterval').value.trim() || '5h',
         lead_time: field('leadTime').value.trim() || '1m',
@@ -1133,6 +1157,10 @@ func (a *app) renderStatusPage() []byte {
         if (!config.times.length) missing.push('发送窗口');
         const modelMissing = config.auth_ids.some((id) => !selectedAuthModel(id));
         if (config.enabled && modelMissing) missing.push('所选凭证的可用预热模型（请先加载模型列表）');
+        if (config.enabled && config.auth_ids.some((id) => {
+          const auth = state.snapshot.auths.find((item) => item.id === id);
+          return auth && auth.type === 'factory-droid' && !selectedModelRoute(id);
+        })) missing.push('Factory 模型原生协议（请刷新状态后重试）');
         if (!config.prompt) missing.push('预热内容');
         if (!config.min_interval) missing.push('最小间隔');
         if (!config.lead_time) missing.push('提前触发窗口');
@@ -1248,6 +1276,7 @@ func (a *app) renderStatusPage() []byte {
         modelSelect.disabled = !selectable || !models.length || !!(modelInfo && modelInfo.loading);
         modelSelect.addEventListener('change', () => {
           state.snapshot.config.auth_models[auth.id] = modelSelect.value;
+          rememberModelRoute(auth.id);
           renderOverview();
         });
         modelTd.appendChild(modelSelect);
@@ -1298,6 +1327,50 @@ func (a *app) renderStatusPage() []byte {
       return info && !info.loading && !info.error && info.models.includes(model) ? model : '';
     }
 
+    function selectedModelRoute(authID) {
+      const model = state.snapshot.config.auth_models[authID];
+      const info = state.authModels.get(authID);
+      return info && info.routes && info.routes[model] || null;
+    }
+
+    function rememberModelRoute(authID) {
+      const route = selectedModelRoute(authID);
+      if (route) state.snapshot.config.auth_model_routes[authID] = { ...route };
+      else delete state.snapshot.config.auth_model_routes[authID];
+    }
+
+    async function loadFactoryCatalog() {
+      const responses = await Promise.all([
+        fetch('/v0/management/plugins/factory-droid/models', { headers: authHeaders() }),
+        fetch('/v0/management/oauth-model-alias', { headers: authHeaders() })
+      ]);
+      const data = await Promise.all(responses.map(readJSON));
+      if (responses.some((response) => !response.ok)) throw new Error('Factory 模型协议加载失败');
+      const catalog = data[0].data || data[0];
+      if (!Array.isArray(catalog.models)) throw new Error('Factory 模型协议响应格式不正确');
+      const aliases = data[1]['oauth-model-alias'] || {};
+      return { models: catalog.models, aliases: Array.isArray(aliases['factory-droid']) ? aliases['factory-droid'] : [] };
+    }
+
+    function factoryModelRoutes(auth, models, catalog) {
+      const routes = Object.create(null);
+      const prefix = String(auth.model_prefix || '').replace(/^\/+|\/+$/g, '');
+      for (const selected of models) {
+        const lookup = prefix && selected.startsWith(prefix + '/') ? selected.slice(prefix.length + 1) : selected;
+        const aliases = catalog.aliases.filter((alias) => alias.alias === lookup);
+        const sourceNames = aliases.length ? aliases.map((alias) => alias.name) : [lookup];
+        const matches = catalog.models.filter((model) =>
+          sourceNames.some((name) => model.id === name || model.upstream_id === name) &&
+          ['anthropic', 'responses', 'chat_completions'].includes(model.protocol) &&
+          ['standard', 'core'].includes(model.quota_pool));
+        if (matches.length === 1) {
+          const model = matches[0];
+          routes[selected] = { model: selected, canonical_model: model.id, protocol: model.protocol, quota_pool: model.quota_pool };
+        }
+      }
+      return routes;
+    }
+
     async function loadAuthModels(force = false) {
       const key = field('managementKey').value.trim();
       if (!key || state.modelsRefreshing) return;
@@ -1307,6 +1380,9 @@ func (a *app) renderStatusPage() []byte {
       });
       if (!auths.length) return;
       state.modelsRefreshing = true;
+      const factoryCatalog = auths.some((auth) => auth.type === 'factory-droid')
+        ? loadFactoryCatalog().then((data) => ({ data }), () => ({ error: true }))
+        : null;
       let nextIndex = 0;
       for (const auth of auths) {
         const previous = state.authModels.get(auth.id);
@@ -1326,6 +1402,11 @@ func (a *app) renderStatusPage() []byte {
             if (!Array.isArray(data.models)) throw new Error('模型列表格式不正确');
             const models = Array.from(new Set(data.models.map((model) => typeof model === 'string' ? model : model.id).filter(Boolean)));
             info = { models, loadedAt: Date.now() };
+            if (auth.type === 'factory-droid') {
+              const catalog = await factoryCatalog;
+              if (!catalog || catalog.error) throw new Error('Factory 模型协议加载失败');
+              info.routes = factoryModelRoutes(auth, models, catalog.data);
+            }
           } catch (error) {
             info = { models: [], error: '模型加载失败，请刷新状态重试', loadedAt: Date.now() };
           }
@@ -1335,6 +1416,7 @@ func (a *app) renderStatusPage() []byte {
             const legacy = String(state.snapshot.config.model || '').split(/[,，、;；\r\n\t]/).map((model) => model.trim());
             state.snapshot.config.auth_models[auth.id] = legacy.find((model) => info.models.includes(model)) || info.models[0];
           }
+          if (auth.type === 'factory-droid' && !info.error) rememberModelRoute(auth.id);
         }
       }
       try {
@@ -1550,7 +1632,7 @@ func (a *app) renderStatusPage() []byte {
     function configForSection(config, section) {
       const keys = section === 'usage'
         ? ['usage_auth_ids', 'usage_push_enabled', 'usage_push_times', 'webhook_url']
-        : ['enabled', 'auth_ids', 'auth_models', 'times', 'prompt', 'min_interval', 'lead_time', 'tick_interval'];
+        : ['enabled', 'auth_ids', 'auth_models', 'auth_model_routes', 'times', 'prompt', 'min_interval', 'lead_time', 'tick_interval'];
       return Object.fromEntries(keys.map((key) => [key, config[key]]));
     }
 
@@ -1584,10 +1666,13 @@ func (a *app) renderStatusPage() []byte {
     async function runWarmupRequest(authID, force) {
       const model = selectedAuthModel(authID);
       if (!model) throw new Error('请先在凭证列表中加载并选择该账号可用的预热模型。');
+      const auth = state.snapshot.auths.find((item) => item.id === authID);
+      const modelRoute = selectedModelRoute(authID);
+      if (auth && auth.type === 'factory-droid' && !modelRoute) throw new Error('无法确认该 Factory 模型的原生协议，请刷新状态并重新选择模型。');
       const response = await fetch(ENDPOINTS.run, {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ auth_id: authID, force: force === true, model })
+        body: JSON.stringify({ auth_id: authID, force: force === true, model, ...(modelRoute ? { model_route: modelRoute } : {}) })
       });
       const data = await readJSON(response);
       if (!response.ok) {
