@@ -77,7 +77,7 @@ jobs:
             runner: macos-15-intel
             ext: dylib
           - platform: macos-arm64
-            runner: macos-14
+            runner: macos-15
             ext: dylib
     steps:
       - name: Checkout release tag
