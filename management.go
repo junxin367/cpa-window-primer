@@ -292,8 +292,8 @@ func (a *app) managementSnapshot() managementSnapshot {
 			Email:         auth.Email,
 			Label:         auth.Label,
 			Source:        auth.Source,
-			// 仅“手动禁用”的认证文件不可勾选；无额度/限流只会让后台定时任务跳过，
-			// 不影响在管理页继续勾选、保存与手动预热。
+			// 禁用的认证文件保留原勾选状态，但不可调整选择或执行预热。
+			// 无额度/限流不影响在管理页继续勾选、保存与手动预热。
 			Selectable:        !auth.Disabled,
 			Unavailable:       auth.Unavailable,
 			Disabled:          auth.Disabled,
@@ -772,8 +772,8 @@ func (a *app) renderStatusPage() []byte {
       field('batchWarmup').hidden = usage;
       field('authSectionTitle').textContent = usage ? '额度推送凭证' : '预热凭证';
       field('authSelectionHelp').textContent = usage
-        ? '选择参与额度预览和推送的 CPA 凭证，按所选凭证类型归类，不影响预热选择。'
-        : '选择参与定时预热的 CPA 凭证，并在每行下拉框中选择该凭证可用的模型。保存后用于定时预热，立即预热可直接试用当前选择。';
+        ? '选择参与额度预览和推送的 CPA 凭证，按所选凭证类型归类，不影响预热选择。已禁用凭证保留勾选设置，但不参与额度统计。'
+        : '选择参与定时预热的 CPA 凭证，并在每行下拉框中选择该凭证可用的模型。保存后用于定时预热，立即预热可直接试用当前选择。已禁用凭证保留勾选设置，执行时自动跳过。';
       field('saveConfig').textContent = usage ? '保存额度推送设置' : '保存预热设置';
       for (const section of ['warmup', 'usage']) {
         const button = field(section + 'Tab');
@@ -1040,9 +1040,9 @@ func (a *app) renderStatusPage() []byte {
 
     function renderOverview() {
       const config = state.snapshot.config;
-      const selectableIDs = new Set((state.snapshot.auths || []).filter((auth) => auth.selectable !== false).map((auth) => auth.id));
-      const selectedCount = (config.auth_ids || []).filter((id) => selectableIDs.has(id)).length;
-      const usageCount = (config.usage_auth_ids || []).filter((id) => selectableIDs.has(id)).length;
+      const authIDs = new Set((state.snapshot.auths || []).map((auth) => auth.id));
+      const selectedCount = (config.auth_ids || []).filter((id) => authIDs.has(id)).length;
+      const usageCount = (config.usage_auth_ids || []).filter((id) => authIDs.has(id)).length;
       field('enabledMetric').textContent = '预热' + (config.enabled ? '已启用' : '已停用') + ' · 额度推送' + (config.usage_push_enabled ? '已启用' : '已停用');
       field('selectedMetric').textContent = '预热 ' + selectedCount + ' / 额度 ' + usageCount;
       const rows = [
@@ -1133,7 +1133,12 @@ func (a *app) renderStatusPage() []byte {
     }
 
     function collectAuthIDs() {
-      return Array.from(document.querySelectorAll('.cwp-auth-check:checked:not(:disabled)')).map((item) => item.dataset.authId);
+      return Array.from(document.querySelectorAll('.cwp-auth-check:checked')).map((item) => item.dataset.authId);
+    }
+
+    function enabledAuthIDs(authIDs) {
+      const enabled = new Set(state.snapshot.auths.filter((auth) => auth.selectable !== false).map((auth) => auth.id));
+      return authIDs.filter((id) => enabled.has(id));
     }
 
     function collectConfig() {
@@ -1160,9 +1165,10 @@ func (a *app) renderStatusPage() []byte {
       if (state.activeSettings === 'warmup') {
         if (config.enabled && !config.auth_ids.length) missing.push('预热认证文件');
         if (!config.times.length) missing.push('发送窗口');
-        const modelMissing = config.auth_ids.some((id) => !selectedAuthModel(id));
+        const warmupAuthIDs = enabledAuthIDs(config.auth_ids);
+        const modelMissing = warmupAuthIDs.some((id) => !selectedAuthModel(id));
         if (config.enabled && modelMissing) missing.push('所选凭证的可用预热模型（请先加载模型列表）');
-        if (config.enabled && config.auth_ids.some((id) => {
+        if (config.enabled && warmupAuthIDs.some((id) => {
           const auth = state.snapshot.auths.find((item) => item.id === id);
           return auth && auth.type === 'factory-droid' && !selectedModelRoute(id);
         })) missing.push('Factory 模型原生协议（请刷新状态后重试）');
@@ -1203,7 +1209,7 @@ func (a *app) renderStatusPage() []byte {
         check.className = 'cwp-auth-check';
         check.dataset.authId = auth.id;
         check.disabled = !selectable;
-        check.checked = selectable && selected.has(auth.id);
+        check.checked = selected.has(auth.id);
         check.addEventListener('change', () => {
           state.snapshot.config[activeAuthKey()] = collectAuthIDs();
           renderOverview();
@@ -1674,9 +1680,10 @@ func (a *app) renderStatusPage() []byte {
     }
 
     async function runWarmupRequest(authID, force) {
+      const auth = state.snapshot.auths.find((item) => item.id === authID);
+      if (auth && auth.selectable === false) throw new Error('认证文件已禁用，已跳过预热。');
       const model = selectedAuthModel(authID);
       if (!model) throw new Error('请先在凭证列表中加载并选择该账号可用的预热模型。');
-      const auth = state.snapshot.auths.find((item) => item.id === authID);
       const modelRoute = selectedModelRoute(authID);
       if (auth && auth.type === 'factory-droid' && !modelRoute) throw new Error('无法确认该 Factory 模型的原生协议，请刷新状态并重新选择模型。');
       const response = await fetch(ENDPOINTS.run, {
@@ -1725,9 +1732,9 @@ func (a *app) renderStatusPage() []byte {
 
     async function runBatchWarmup() {
       clearStatus();
-      const authIDs = collectAuthIDs();
+      const authIDs = enabledAuthIDs(collectAuthIDs());
       if (!authIDs.length) {
-        setStatus('请先选择认证文件。', true);
+        setStatus('请先选择未禁用的认证文件。', true);
         return;
       }
       const button = field('batchWarmup');

@@ -27,6 +27,8 @@ func warmupMessage(record attemptRecord) string {
 		model = fmt.Sprintf("模型「%s」", strings.TrimSpace(record.Model))
 	}
 	switch {
+	case has("auth_disabled"):
+		return "认证文件已禁用，已跳过预热。"
 	case has("factory_model_route_unknown"):
 		return "预热失败：无法确认该 Factory 模型的原生协议，请刷新模型列表并重新保存预热设置。"
 	case has("factory_host_unsupported"):

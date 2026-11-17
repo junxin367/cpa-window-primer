@@ -225,6 +225,9 @@ func resolveWarmupAuthTarget(raw string) (warmupAuthTarget, error) {
 }
 
 func warmupAuthTargetFromEntry(auth pluginapi.HostAuthFileEntry, requested string) (warmupAuthTarget, error) {
+	if auth.Disabled {
+		return warmupAuthTarget{}, fmt.Errorf("auth_disabled: auth %s is disabled", requested)
+	}
 	authID := authIDForEntry(auth)
 	if authID == "" {
 		return warmupAuthTarget{}, fmt.Errorf("auth_id is empty for warmup target %s", requested)

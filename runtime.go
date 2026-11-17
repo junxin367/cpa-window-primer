@@ -271,6 +271,16 @@ func (a *app) skipScheduledWarmupWhenQuotaFull(entry pluginapi.HostAuthFileEntry
 	if authID == "" {
 		return true
 	}
+	// 延迟预热可能在等待期间被禁用，查询额度前重新读取宿主状态。
+	allowed, err := schedulableAuthIDs()
+	if err != nil {
+		a.setLastError(err.Error())
+		return true
+	}
+	entry, ok := allowed[authID]
+	if !ok {
+		return true
+	}
 	now := time.Now()
 	models := warmupModelCandidates(cfg, authID)
 	usage := fetchAuthUsage(entry)
