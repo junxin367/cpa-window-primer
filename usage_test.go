@@ -96,16 +96,16 @@ func TestDevinMixedPlansExcludeMaxFromDailyAggregate(t *testing.T) {
 	}
 }
 
-func TestCodexPlanWeightMatchesCPAManager(t *testing.T) {
+func TestCodexPlanWeight(t *testing.T) {
 	tests := []struct {
 		plan string
 		want float64
 	}{
 		{plan: "plus", want: 1},
 		{plan: "pro", want: 20},
-		{plan: "prolite", want: 5},
-		{plan: "pro-lite", want: 5},
-		{plan: "pro_lite", want: 5},
+		{plan: "prolite", want: 10},
+		{plan: "pro-lite", want: 10},
+		{plan: "pro_lite", want: 10},
 		{plan: "free", want: 0},
 	}
 	for _, tt := range tests {
@@ -128,8 +128,8 @@ func TestAggregateCodexGroupUsesPlanWeights(t *testing.T) {
 		},
 		{
 			Provider:  "codex",
-			Plan:      "plus",
-			Weight:    codexPlanWeight("plus"),
+			Plan:      "prolite",
+			Weight:    codexPlanWeight("prolite"),
 			Primary:   usageWindow{UsedPercent: 20, HasData: true},
 			Secondary: usageWindow{UsedPercent: 20, HasData: true},
 		},
@@ -146,8 +146,8 @@ func TestAggregateCodexGroupUsesPlanWeights(t *testing.T) {
 	if !got.HasData {
 		t.Fatal("aggregateGroup HasData = false, want true")
 	}
-	wantPrimary := (10*1 + 20*1 + 50*20) / 22.0
-	wantSecondary := (10*1 + 20*1 + 40*20) / 22.0
+	wantPrimary := (10*1 + 20*10 + 50*20) / 31.0
+	wantSecondary := (10*1 + 20*10 + 40*20) / 31.0
 	if got.PrimaryPercent != wantPrimary {
 		t.Fatalf("PrimaryPercent = %v, want %v", got.PrimaryPercent, wantPrimary)
 	}
